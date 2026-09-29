@@ -96,7 +96,7 @@ class VoiceService : Service() {
                 .any { low.startsWith(it) }
         if (wake) {
             // strip wake for single-shot ("hey strike open whatsapp")
-            val cmd = low.split("strike").lastOrNull()?.trim(" ,.!?".toSet())
+            val cmd = low.split("strike").lastOrNull()?.trim { it in " ,.!?" }
                 .orEmpty().ifBlank { heard }
             // Orb shows immediately (Siri-style), answers + speaks, then hides.
             OverlayService.show(this, if (cmd.length > 2) cmd else heard)
