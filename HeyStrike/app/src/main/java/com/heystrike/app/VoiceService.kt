@@ -26,6 +26,7 @@ class VoiceService : Service() {
 
     private var sr: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
     private lateinit var api: StrikeApi
     private var restartWanted = true
 
@@ -34,6 +35,10 @@ class VoiceService : Service() {
     override fun onCreate() {
         super.onCreate()
         startFg()
+        // Stay alive + listening with screen off (needs battery Unrestricted)
+        val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+        wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "HeyStrike:mic")
+        try { wakeLock?.acquire(12 * 60 * 60 * 1000L) } catch (_: Exception) {}
         tts = TextToSpeech(this) { st ->
             if (st == TextToSpeech.SUCCESS) tts?.language = Locale.US
         }
@@ -120,6 +125,7 @@ class VoiceService : Service() {
     override fun onDestroy() {
         restartWanted = false
         try { sr?.destroy() } catch (_: Exception) {}
+        try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}
         tts?.shutdown()
         super.onDestroy()
     }

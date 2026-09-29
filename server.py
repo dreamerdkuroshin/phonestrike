@@ -169,6 +169,12 @@ def handle_mobile_command(text):
         return f"Good {daypart}! I'm Strike. How can I help?"
     if t in ("i love you", "do you love me"):
         return "I appreciate that! I'm always here to help you."
+    # --- Unlock-by-voice is impossible by Android security: refuse + guide ---
+    if ("password" in t or "passcode" in t or "pin" in t) and any(k in t for k in ["unlock", "open my phone", "open the phone", "unlock my phone", "lock khol"]):
+        return ("I can't unlock your phone by voice — Android blocks every app, including me, from unlocking. "
+                "Never speak your password aloud, anyone nearby would hear it. "
+                "Instead use Extend Unlock: trusted place or watch keeps it unlocked. "
+                "Say 'open security settings' and I'll take you there. Meanwhile, tell me the task after you unlock — e.g. open whatsapp.")
 
     # battery
     if any(k in t for k in ["battery", "charge level", "how much battery"]):
@@ -231,8 +237,15 @@ def handle_mobile_command(text):
         dest = t.split(" to ", 1)[1] if " to " in t else t
         import urllib.parse
         url = "google.navigation:q=" + urllib.parse.quote(dest)
-        run_shell_command(f"am start -a android.intent.action.VIEW -d {shlex.quote(url)} 2>&1 | head -n 3")
+        run_shell_command(f"am start --user 0 -a android.intent.action.VIEW -d {shlex.quote(url)} 2>&1 | head -n 3")
         return f"🗺️ Navigating to {dest}..."
+
+    # security settings (Extend Unlock / Smart Lock lives here)
+    if any(k in t for k in ["security settings", "smart lock", "extend unlock", "trust agent"]):
+        out = run_shell_command("am start --user 0 -a android.settings.SECURITY_SETTINGS 2>&1 | head -n 3")
+        if "Starting:" in out:
+            return "🔐 Security settings opened. Look for Extend Unlock / Smart Lock → trusted place or watch."
+        return "❌ Could not open Security settings."
 
     return None
 
@@ -639,20 +652,38 @@ def api_chat():
 @app.route('/api/voice/command', methods=['POST'])
 def api_voice_command():
     """Background Termux listener: {text} -> {response}. Handles mobile + LLM."""
+    def run_single(piece):
+        p = piece.strip()
+        if not p:
+            return None
+        mob = handle_mobile_command(p)
+        if mob is not None and not mob.startswith("❓"):
+            return mob
+        if p.lower().startswith(("run ", "switch to ", "list ", "launch ", "start ", "stop ", "status", "check ", "help", "?", "draw ", "generate image", "current model", "omniroute ", "restart strike", "open ", "call ", "battery", "torch", "flashlight", "volume", "search ", "google ", "navigate ")):
+            return jarvis_commander(p)
+        sys_prompt = "You are Strike, a phone voice assistant like Gemini. Keep answers short and speakable, under 60 words unless detail requested. No markdown."
+        return query_llm(p, system_prompt=sys_prompt)
     try:
         data = request.json or {}
         text = str(data.get('text', '')).strip()
         if not text:
             return jsonify({"response": "I didn't hear anything."})
-        mob = handle_mobile_command(text)
-        if mob is not None and not mob.startswith("❓"):
-            return jsonify({"response": mob, "type": "mobile"})
-        if text.lower().startswith(("run ", "switch to ", "list ", "launch ", "start ", "stop ", "status", "check ", "help", "?", "draw ", "generate image", "current model", "omniroute ", "restart strike", "open ", "call ", "battery", "torch", "flashlight", "volume", "search ", "google ", "navigate ")):
-            return jsonify({"response": jarvis_commander(text), "type": "command"})
+        import re as _re
+        # chained tasks: "open whatsapp and then tell me the time" -> run each, join
+        parts = _re.split(r'\s+(?:and then|and now|then|and after that|phir)\s+', text, flags=_re.IGNORECASE)
+        parts = [p for p in (x.strip() for x in parts) if p]
+        if len(parts) > 1:
+            outs = []
+            for p in parts[:5]:
+                try:
+                    r = run_single(p)
+                    if r:
+                        outs.append(str(r)[:500])
+                except Exception as e:
+                    outs.append(f"Step failed: {e}")
+            return jsonify({"response": " ✅ ".join(outs)[:1500], "type": "chain"})
         try:
-            sys_prompt = "You are Strike, a phone voice assistant like Gemini. Keep answers short and speakable, under 60 words unless detail requested. No markdown."
-            t = query_llm(text, system_prompt=sys_prompt)
-            return jsonify({"response": t, "type": "ai"})
+            return jsonify({"response": run_single(text), "type": "single"})
         except Exception as e:
             return jsonify({"response": f"AI Connection Error: {e}"}), 502
     except Exception as e:
