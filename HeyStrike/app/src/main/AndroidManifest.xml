@@ -56,8 +56,8 @@
                 <action android:name="android.service.voice.VoiceInteractionService" />
             </intent-filter>
             <meta-data
-                android:name="android.voice_interaction.SESSION_SERVICE"
-                android:value=".AssistantSessionService" />
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
         </service>
 
         <service

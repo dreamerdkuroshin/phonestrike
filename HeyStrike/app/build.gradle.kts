@@ -11,8 +11,8 @@ android {
         applicationId = "com.heystrike.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.2.1"
+        versionCode = 3
+        versionName = "1.2.2"
     }
     signingConfigs {
         // Pinned throwaway key (HeyStrike/keystore/release.p12) so every CI
