@@ -76,14 +76,12 @@ class MainActivity : AppCompatActivity() {
                         statusText.text = "System dialog opening — tap Set as default…"
                         rm.requestRole(
                             android.app.role.RoleManager.ROLE_ASSISTANT,
-                            mainExecutor,
-                            { granted ->
-                                statusText.text = if (granted)
-                                    "Hey Strike IS the default assistant now."
-                                else "Role denied — pick Hey Strike in the list manually."
-                            },
-                            null
-                        )
+                            mainExecutor
+                        ) { granted ->
+                            statusText.text = if (granted)
+                                "Hey Strike IS the default assistant now."
+                            else "Role denied — pick Hey Strike in the list manually."
+                        }
                     }
                 } catch (e: Exception) {
                     statusText.text = "Role request failed: ${e.message}"

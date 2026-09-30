@@ -104,11 +104,14 @@ class StrikeAgent(private val ctx: Context) {
                 } else "fail: typing rejected"
             }
             "enter" -> {
-                val svc2 = svc ?: return "fail: tap service off"
-                val ok = svc2.rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                    ?.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER) == true
+                // No IME key API: tap the on-screen Search/Enter/Go key instead.
+                var done = false
+                for (key in listOf("search", "enter", "go", "done", "send")) {
+                    val n = findNode(key)
+                    if (n != null && clickNode(n)) { done = true; break }
+                }
                 Thread.sleep(800)
-                if (ok) "ok: submitted" else "fail: no focused input"
+                if (done) "ok: submitted" else "fail: no submit key"
             }
             "swipeup", "swipedown" -> {
                 if (svc == null) return "fail: tap service off"
@@ -194,7 +197,6 @@ Screen now:
                 log.append("$name($arg) -> $res\n")
             }
             screen = observe()
-            if (log.length > 3000) break
         }
         return "I did several steps, please check the screen. " + log.takeLast(300)
     }
