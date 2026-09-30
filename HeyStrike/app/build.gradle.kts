@@ -11,17 +11,25 @@ android {
         applicationId = "com.heystrike.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.2.1"
+    }
+    signingConfigs {
+        // Pinned throwaway key (HeyStrike/keystore/release.p12) so every CI
+        // build shares one signature and updates install cleanly. NOT a
+        // production secret — debug-grade app key only.
+        create("fixed") {
+            storeFile = rootProject.file("keystore/release.p12")
+            storePassword = "heystrike123"
+            keyAlias = "1"
+            keyPassword = "heystrike123"
+        }
     }
     buildTypes {
         getByName("debug") { isMinifyEnabled = false }
         getByName("release") {
-            isMinifyEnabled = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("fixed")
         }
     }
     compileOptions {
