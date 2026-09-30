@@ -55,6 +55,18 @@
             <intent-filter>
                 <action android:name="android.service.voice.VoiceInteractionService" />
             </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction.SESSION_SERVICE"
+                android:value=".AssistantSessionService" />
+        </service>
+
+        <service
+            android:name=".AssistantSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionSessionService" />
+            </intent-filter>
         </service>
 
         <!-- Phone-UI control layer -->
