@@ -35,4 +35,6 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
+    // Offline wake-word gate + command ASR (no cloud, no popup)
+    implementation("com.alphacephei:vosk-android:0.3.75")
 }

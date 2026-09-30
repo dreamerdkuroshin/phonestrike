@@ -43,6 +43,35 @@ class MainActivity : AppCompatActivity() {
             Prefs.saveServer(this, serverBox.text.toString().trim())
             OverlayService.show(this)
         }
+        findViewById<Button>(R.id.modelBtn).setOnClickListener {
+            statusText.text = "Downloading voice model (40MB, once)…"
+            Thread {
+                try {
+                    ModelManager.download(this) { done, total ->
+                        runOnUiThread {
+                            statusText.text = "Voice model: ${done / 1048576}MB / ${total / 1048576}MB"
+                        }
+                    }
+                    runOnUiThread { statusText.text = "Voice model ready. Start listening." }
+                } catch (e: Exception) {
+                    runOnUiThread { statusText.text = "Model download failed: ${e.message}" }
+                }
+            }.start()
+        }
+        findViewById<Button>(R.id.assistantBtn).setOnClickListener {
+            try {
+                startActivity(Intent(android.provider.Settings.ACTION_VOICE_INPUT_SETTINGS))
+            } catch (_: Exception) {
+                Toast.makeText(this, "Open Settings → Apps → Default apps → Digital assistant", Toast.LENGTH_LONG).show()
+            }
+        }
+        findViewById<Button>(R.id.a11yBtn).setOnClickListener {
+            try {
+                startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            } catch (_: Exception) {
+                Toast.makeText(this, "Open Settings → Accessibility → Strike Tap", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private fun askPermissions() {

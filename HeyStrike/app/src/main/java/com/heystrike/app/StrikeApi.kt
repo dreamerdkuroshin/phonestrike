@@ -27,6 +27,21 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
 
     fun handle(text: String): String {
         val t = text.lowercase().trim()
+        // Phone-UI layer (Accessibility): tap by visible text, back/home
+        if (t.startsWith("tap ")) {
+            val target = t.removePrefix("tap ").trim()
+            if (target.isEmpty()) return "Tap what? Say tap followed by the button name."
+            return if (StrikeAccessibilityService.tapText(target)) "Tapped $target."
+            else "Couldn't find $target on screen. Enable Strike Tap in Accessibility settings."
+        }
+        if (t in listOf("go back", "back", "press back")) {
+            return if (StrikeAccessibilityService.goBack()) "Went back."
+            else "Back unavailable. Enable Strike Tap in Accessibility settings."
+        }
+        if (t in listOf("go home", "home screen", "press home")) {
+            return if (StrikeAccessibilityService.goHome()) "Home."
+            else "Home unavailable. Enable Strike Tap in Accessibility settings."
+        }
         // Local instant intents (no network): open app
         for ((name, pkg) in appNames) {
             if (t.contains("open $name") || t == "open $name") {
