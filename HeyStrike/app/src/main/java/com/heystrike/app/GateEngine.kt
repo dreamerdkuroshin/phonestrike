@@ -78,12 +78,16 @@ class GateEngine(
                 return
             }
             audio?.startRecording()
-            val buf = ByteArray(4096)
+            // P3: bigger chunks + parse every 2nd frame = ~half the Vosk CPU.
+            val buf = ByteArray(8192)
+            var frame = 0
             while (running.get()) {
                 val n = audio?.read(buf, 0, buf.size) ?: -1
                 if (n <= 0) continue
                 val rec = gate ?: continue
                 rec.acceptWaveForm(buf, n)
+                frame++
+                if (frame % 2 != 0) continue
                 val partial = try {
                     JSONObject(rec.partialResult).optString("partial", "")
                 } catch (_: Exception) { "" }.lowercase()

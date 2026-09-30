@@ -27,6 +27,13 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
 
     fun handle(text: String): String {
         val t = text.lowercase().trim()
+        // P4: multi-step / contact tasks go to the planner (observe→act→verify),
+        // not the direct parser. e.g. "open whatsapp and call rahul".
+        if (t.startsWith("call ") || " and " in t || t.startsWith("tap ")) {
+            return try {
+                StrikeAgent(ctx).run(text)
+            } catch (e: Exception) { "Planner failed: ${e.message}" }
+        }
         // Phone-UI layer (Accessibility): tap by visible text, back/home
         if (t.startsWith("tap ")) {
             val target = t.removePrefix("tap ").trim()
@@ -50,6 +57,24 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         }
         // Everything else -> PocketStrike brain (local pocket-qwen3 or cloud)
         return askServer(text)
+    }
+
+    companion object {
+        private val pkgMap = mapOf(
+            "whatsapp" to "com.whatsapp", "youtube" to "com.google.android.youtube",
+            "chrome" to "com.android.chrome", "gmail" to "com.google.android.gm",
+            "maps" to "com.google.android.apps.maps", "telegram" to "org.telegram.messenger",
+            "instagram" to "com.instagram.android", "spotify" to "com.spotify.music",
+            "camera" to "com.android.camera2", "clock" to "com.google.android.deskclock",
+            "settings" to "com.android.settings", "photos" to "com.google.android.apps.photos",
+            "phone" to "com.google.android.dialer", "dialer" to "com.google.android.dialer",
+            "messages" to "com.google.android.apps.messaging", "sms" to "com.google.android.apps.messaging",
+            "contacts" to "com.google.android.contacts"
+        )
+        fun appPkg(name: String): String {
+            val k = name.lowercase().trim()
+            return pkgMap[k] ?: (k.takeIf { "." in k } ?: "com.android.settings")
+        }
     }
 
     private fun launch(pkg: String): Boolean {
