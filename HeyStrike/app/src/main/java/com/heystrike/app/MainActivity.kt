@@ -63,30 +63,22 @@ class MainActivity : AppCompatActivity() {
             }.start()
         }
         findViewById<Button>(R.id.assistantBtn).setOnClickListener {
-            // P1: ask the OS directly for the assistant role (system dialog),
-            // not just opening Settings and hoping.
-            if (android.os.Build.VERSION.SDK_INT >= 29) {
-                try {
+            // P1: land exactly on the system picker (RoleManager.requestRole
+            // is not callable on this API), then report held/not-held.
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
                     val rm = getSystemService(android.app.role.RoleManager::class.java)
-                    if (!rm.isRoleAvailable(android.app.role.RoleManager.ROLE_ASSISTANT)) {
-                        statusText.text = "Assistant role not available on this device."
-                    } else if (rm.isRoleHeld(android.app.role.RoleManager.ROLE_ASSISTANT)) {
+                    if (rm.isRoleHeld(android.app.role.RoleManager.ROLE_ASSISTANT)) {
                         statusText.text = "Already the default assistant. Say Hey Strike."
-                    } else {
-                        statusText.text = "System dialog opening — tap Set as default…"
-                        rm.requestRole(
-                            android.app.role.RoleManager.ROLE_ASSISTANT,
-                            mainExecutor
-                        ) { granted ->
-                            statusText.text = if (granted)
-                                "Hey Strike IS the default assistant now."
-                            else "Role denied — pick Hey Strike in the list manually."
-                        }
+                        return@setOnClickListener
                     }
-                } catch (e: Exception) {
-                    statusText.text = "Role request failed: ${e.message}"
                 }
-            } else {
+            } catch (_: Exception) {}
+            try {
+                // Opens Default apps — the Digital assistant app row is here.
+                startActivity(Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+                statusText.text = "Pick Hey Strike under Digital assistant app, then come back."
+            } catch (_: Exception) {
                 try {
                     startActivity(Intent(android.provider.Settings.ACTION_VOICE_INPUT_SETTINGS))
                 } catch (_: Exception) {
