@@ -27,6 +27,10 @@ class MainActivity : AppCompatActivity() {
         serverBox = findViewById(R.id.serverBox)
         statusText = findViewById(R.id.statusText)
         serverBox.setText(Prefs.server(this))
+        try {
+            val pi = packageManager.getPackageInfo(packageName, 0)
+            statusText.text = "Hey Strike v${pi.versionName} — grant 1→7, then Talk."
+        } catch (_: Exception) {}
 
         findViewById<Button>(R.id.grantBtn).setOnClickListener { askPermissions() }
         findViewById<Button>(R.id.overlayBtn).setOnClickListener { askOverlay() }

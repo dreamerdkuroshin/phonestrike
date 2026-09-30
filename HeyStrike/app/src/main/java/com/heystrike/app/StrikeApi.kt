@@ -64,9 +64,50 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         } catch (_: Exception) { false }
     }
 
+    /**
+     * Streaming twin of handle(): local intents arrive as one instant token,
+     * AI answers arrive token-by-token like ChatGPT.
+     */
+    fun handleStream(text: String, onToken: (String) -> Unit, onDone: () -> Unit) {
+        val t = text.lowercase().trim()
+        if (t.startsWith("tap ")) {
+            val target = t.removePrefix("tap ").trim()
+            if (target.isEmpty()) onToken("Tap what? Say tap followed by the button name.")
+            else if (StrikeAccessibilityService.tapText(target)) onToken("Tapped $target.")
+            else onToken("Couldn't find $target on screen. Enable Strike Tap in Accessibility settings.")
+            onDone()
+            return
+        }
+        if (t in listOf("go back", "back", "press back")) {
+            onToken(if (StrikeAccessibilityService.goBack()) "Went back." else "Back unavailable. Enable Strike Tap in Accessibility settings.")
+            onDone()
+            return
+        }
+        if (t in listOf("go home", "home screen", "press home")) {
+            onToken(if (StrikeAccessibilityService.goHome()) "Home." else "Home unavailable. Enable Strike Tap in Accessibility settings.")
+            onDone()
+            return
+        }
+        for ((name, pkg) in appNames) {
+            if (t.contains("open $name") || t == "open $name") {
+                onToken(if (launch(pkg)) "Opened $name." else "Couldn't open $name. Is it installed?")
+                onDone()
+                return
+            }
+        }
+        askServerStream(text, onDone, onToken)
+    }
+
     private fun askServer(text: String): String {
-        return try {
-            val url = URL(Prefs.server(ctx) + "/api/voice/command")
+        val out = StringBuilder()
+        askServerStream(text, onDone = {}, onToken = { out.append(it) })
+        return out.toString().ifBlank { "Sorry, empty reply." }
+    }
+
+    /** Live token stream (ChatGPT-style): calls onToken per chunk as they arrive. */
+    fun askServerStream(text: String, onDone: () -> Unit, onToken: (String) -> Unit) {
+        try {
+            val url = URL(Prefs.server(ctx) + "/api/voice/stream")
             val c = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 setRequestProperty("Content-Type", "application/json")
@@ -76,12 +117,22 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
             }
             val body = JSONObject().put("text", text).toString().toByteArray()
             c.outputStream.use { it.write(body) }
-            val code = c.responseCode
-            val stream = if (code in 200..299) c.inputStream else c.errorStream
-            val resp = stream.bufferedReader().readText()
-            JSONObject(resp).optString("response", "Sorry, empty reply.")
+            c.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    val s = line.trim()
+                    if (!s.startsWith("data:")) return@forEach
+                    val payload = s.removePrefix("data:").trim()
+                    if (payload == "[DONE]") return@forEach
+                    try {
+                        val tok = JSONObject(payload).optString("token", "")
+                        if (tok.isNotEmpty()) onToken(tok)
+                    } catch (_: Exception) {}
+                }
+            }
         } catch (e: Exception) {
-            "Strike server unreachable. In Termux run: bash ~/PocketStrike-AI/start-all.sh"
+            onToken("Strike server unreachable. In Termux run: bash ~/PocketStrike-AI/start-all.sh")
+        } finally {
+            onDone()
         }
     }
 

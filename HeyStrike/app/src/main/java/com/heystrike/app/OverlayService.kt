@@ -79,15 +79,49 @@ class OverlayService : Service() {
         wm?.addView(root, params())
     }
 
+    private var gen = 0 // glitch guard: overlapping answers can't fight over the orb
+
     private fun answerAndClose(text: String) {
+        val myGen = ++gen
         Thread {
-            val reply = api.handle(text)
-            (root as? SiriOrbView)?.setText("“$text”\n\n$reply")
-            api.speak(reply)
-            Thread.sleep(4500)
-            hide()
-            stopSelf()
+            (root as? SiriOrbView)?.setText("“$text”\n\n…")
+            val full = StringBuilder()
+            val pending = StringBuilder()
+            fun flushSpeech(force: Boolean) {
+                val s = pending.toString()
+                // speak sentence-by-sentence as they complete (live speaking)
+                val end = s.lastIndexOfAny(charArrayOf('.', '!', '?', '\n'))
+                if (end >= 0 || (force && s.isNotBlank())) {
+                    val part = if (end >= 0) s.substring(0, end + 1) else s
+                    pending.delete(0, part.length)
+                    speakChunk(part.trim())
+                }
+            }
+            api.handleStream(text,
+                onToken = { tok ->
+                    if (myGen != gen) return@handleStream
+                    full.append(tok)
+                    pending.append(tok)
+                    (root as? SiriOrbView)?.setText("“$text”\n\n$full")
+                    flushSpeech(false)
+                },
+                onDone = {
+                    if (myGen != gen) return@handleStream
+                    flushSpeech(true)
+                    try { Thread.sleep(3500) } catch (_: Exception) {}
+                    if (myGen != gen) return@handleStream
+                    hide()
+                    stopSelf()
+                })
         }.start()
+    }
+
+    private fun speakChunk(s: String) {
+        if (s.isBlank()) return
+        val clean = s.replace(Regex("[\\uD83C-\\uDBFF\\uDC00-\\uDFFF☀-➿➕➖*#>`_]"), "").trim().take(400)
+        if (clean.isBlank()) return
+        // QUEUE_ADD = ChatGPT-style continuous speech while text keeps streaming
+        tts?.speak(clean, TextToSpeech.QUEUE_ADD, null, "strike$gen")
     }
 
     private fun hide() {

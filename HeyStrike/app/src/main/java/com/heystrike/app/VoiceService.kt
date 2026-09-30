@@ -68,6 +68,14 @@ class VoiceService : Service() {
 
     override fun onStartCommand(i: Intent?, f: Int, id: Int): Int = START_STICKY
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Glitch guard: swiping the app away must not kill listening; restart it.
+        try {
+            val s = Intent(applicationContext, VoiceService::class.java)
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(s) else startService(s)
+        } catch (_: Exception) {}
+    }
+
     override fun onDestroy() {
         try { gate?.stop() } catch (_: Exception) {}
         try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}

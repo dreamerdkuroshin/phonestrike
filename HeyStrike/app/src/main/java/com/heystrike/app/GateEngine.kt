@@ -33,6 +33,8 @@ class GateEngine(
     private var audio: AudioRecord? = null
     private var model: Model? = null
     private var gate: Recognizer? = null
+    // Glitch guard: own speaker output re-entering the mic must not re-wake us
+    @Volatile private var cooldownUntil = 0L
 
     fun start() {
         if (running.getAndSet(true)) return
@@ -86,7 +88,9 @@ class GateEngine(
                     JSONObject(rec.partialResult).optString("partial", "")
                 } catch (_: Exception) { "" }.lowercase()
                 if ("hey strike" in partial || "hey str" in partial) {
+                    if (System.currentTimeMillis() < cooldownUntil) continue
                     doCommand()
+                    cooldownUntil = System.currentTimeMillis() + 4000
                     // fresh gate after command (recognizer state consumed)
                     try { gate?.close() } catch (_: Exception) {}
                     val m = model ?: break

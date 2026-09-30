@@ -625,27 +625,41 @@ def api_chat():
                 try: mobile_tts_say(resp_text)
                 except Exception: pass
             return Response(resp_text, mimetype='text/plain')
-        # LLM with short voice-friendly system prompt when voice enabled
+        # LLM with short voice-friendly system prompt when voice enabled (STREAMED raw for live UI)
         sys_prompt = None
         if config.get("voice_enabled"):
             sys_prompt = "You are Strike, a phone voice assistant like Gemini. Keep spoken answers short, natural, under 60 words unless asked for detail. No markdown."
-        try:
-            import requests as _rq
-            base_url = get_base_url(); model = get_model(); api_key = get_api_key()
-            msgs = ([{"role": "system", "content": sys_prompt}] if sys_prompt else []) + [{"role": "user", "content": last_user}]
-            payload = {"model": model, "messages": msgs, "stream": False}
-            headers = {"Content-Type": "application/json"}
-            if api_key: headers["Authorization"] = f"Bearer {api_key}"
-            r = _rq.post(base_url.rstrip("/") + "/chat/completions", json=payload, headers=headers, timeout=120)
-            if r.status_code == 200:
-                text = r.json().get('choices', [{}])[0].get('message', {}).get('content', "No response")
-                if config.get("voice_enabled"):
-                    try: mobile_tts_say(text)
-                    except Exception: pass
-                return Response(text, mimetype='text/plain')
-            return Response(f"AI Error {r.status_code}: {r.text[:300]}", mimetype='text/plain'), 502
-        except Exception as e:
-            return Response(f"AI Connection Error: {e}", mimetype='text/plain'), 502
+        def _gen():
+            try:
+                import requests as _rq2
+                base_url = get_base_url(); model = get_model(); api_key = get_api_key()
+                msgs = ([{"role": "system", "content": sys_prompt}] if sys_prompt else []) + [{"role": "user", "content": last_user}]
+                payload = {"model": model, "messages": msgs, "stream": True}
+                headers = {"Content-Type": "application/json"}
+                if api_key: headers["Authorization"] = f"Bearer {api_key}"
+                r = _rq2.post(base_url.rstrip("/") + "/chat/completions", json=payload, headers=headers, timeout=120, stream=True)
+                if r.status_code != 200:
+                    yield f"AI Error {r.status_code}: {r.text[:200]}"
+                    return
+                for line in r.iter_lines():
+                    if not line:
+                        continue
+                    s = line.decode('utf-8', 'replace').strip()
+                    if not s.startswith("data:"):
+                        continue
+                    body = s[5:].strip()
+                    if body == "[DONE]":
+                        break
+                    try:
+                        import json as _js3
+                        tok = _js3.loads(body)["choices"][0].get("delta", {}).get("content", "")
+                    except Exception:
+                        tok = ""
+                    if tok:
+                        yield tok
+            except Exception as e:
+                yield f"AI Connection Error: {e}"
+        return Response(_gen(), mimetype='text/plain')
     except Exception as e:
         return str(e), 500
 
@@ -688,6 +702,71 @@ def api_voice_command():
             return jsonify({"response": f"AI Connection Error: {e}"}), 502
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/voice/stream', methods=['POST'])
+def api_voice_stream():
+    """Live token streaming (ChatGPT-style): SSE `data: {"token":"..."}` + `data: [DONE]`.
+    Instant intents (mobile/jarvis) return immediately as one token."""
+    def run_single(piece):
+        p = (piece or "").strip()
+        if not p:
+            return None
+        mob = handle_mobile_command(p)
+        if mob is not None and not mob.startswith("❓"):
+            return mob
+        if p.lower().startswith(("run ", "switch to ", "list ", "launch ", "start ", "stop ", "status", "check ", "help", "?", "draw ", "generate image", "current model", "omniroute ", "restart strike", "open ", "call ", "battery", "torch", "flashlight", "volume", "search ", "google ", "navigate ")):
+            return jarvis_commander(p)
+        return None  # needs LLM streaming
+    text_in = str((request.json or {}).get('text', '')).strip()
+    from flask import stream_with_context
+
+    @stream_with_context
+    def gen():
+        import json as _js
+        import requests as _rq
+        try:
+            text = text_in
+            if not text:
+                yield 'data: {"token":"I didn\'t hear anything."}\n\n'
+                yield 'data: [DONE]\n\n'
+                return
+            instant = run_single(text)
+            if instant is not None:
+                yield 'data: ' + _js.dumps({"token": instant}) + '\n\n'
+                yield 'data: [DONE]\n\n'
+                return
+            base_url = get_base_url(); model = get_model(); api_key = get_api_key()
+            sys_prompt = "You are Strike, a phone voice assistant like Gemini. Keep answers short and speakable, under 60 words unless detail requested. No markdown."
+            payload = {"model": model, "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": text}], "stream": True}
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            r = _rq.post(base_url.rstrip("/") + "/chat/completions", json=payload, headers=headers, timeout=120, stream=True)
+            if r.status_code != 200:
+                yield 'data: ' + _js.dumps({"token": f"AI Error {r.status_code}"}) + '\n\n'
+                yield 'data: [DONE]\n\n'
+                return
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                s = line.decode('utf-8', 'replace').strip()
+                if not s.startswith("data:"):
+                    continue
+                body = s[5:].strip()
+                if body == "[DONE]":
+                    break
+                try:
+                    tok = _js.loads(body)["choices"][0].get("delta", {}).get("content", "")
+                except Exception:
+                    tok = ""
+                if tok:
+                    yield 'data: ' + _js.dumps({"token": tok}) + '\n\n'
+            yield 'data: [DONE]\n\n'
+        except Exception as e:
+            import json as _js2
+            yield 'data: ' + _js2.dumps({"token": f"Stream error: {e}"}) + '\n\n'
+            yield 'data: [DONE]\n\n'
+    return Response(gen(), mimetype='text/event-stream')
 
 @app.route('/api/mobile/battery', methods=['GET'])
 def api_mobile_battery():
