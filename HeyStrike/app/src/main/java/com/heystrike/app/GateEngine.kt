@@ -25,7 +25,7 @@ import kotlin.math.max
  * App starts -> ONE long-running AudioRecord (16kHz PCM, VOICE_RECOGNITION —
  *   the device applies its own speech AEC/NS/AGC for this source; we do NOT
  *   stack AudioEffect on top, that double-processes audio)
- *   -> tiny-grammar Vosk gate ["hey strike","[unk]"] (cheap, always-on)
+ *   -> tiny-grammar Vosk gate ["hey strike"] (cheap, always-on)
  *   -> ring buffer keeps ~0.9s of audio at all times
  *   -> wake detected (or barge-in while ASSISTANT_SPEAKING)
  *        -> FULL command ASR fed the ring-buffer TAIL first, then live audio:
@@ -117,7 +117,7 @@ class GateEngine(
     private fun loop() {
         try {
             model = Model(modelDir)
-            gate = Recognizer(model, 16000f, "[\"hey strike\", \"[unk]\"]")
+            gate = Recognizer(model, 16000f, "[\"hey strike\"]")
             val min = AudioRecord.getMinBufferSize(
                 16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
             ).coerceAtLeast(8192)
@@ -196,7 +196,7 @@ class GateEngine(
                     cooldownUntil = System.currentTimeMillis() + 4000
                     try { gate?.close() } catch (_: Exception) {}
                     val m = model ?: break
-                    gate = Recognizer(m, 16000f, "[\"hey strike\", \"[unk]\"]")
+                    gate = Recognizer(m, 16000f, "[\"hey strike\"]")
                     continue
                 }
 
@@ -213,7 +213,7 @@ class GateEngine(
                     // fresh gate after command (recognizer state consumed)
                     try { gate?.close() } catch (_: Exception) {}
                     val m = model ?: break
-                    gate = Recognizer(m, 16000f, "[\"hey strike\", \"[unk]\"]")
+                    gate = Recognizer(m, 16000f, "[\"hey strike\"]")
                 }
             }
         } catch (t: Throwable) {

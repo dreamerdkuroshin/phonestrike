@@ -156,6 +156,18 @@
                 android:text=""
                 android:textColor="@color/strike_text2"
                 android:textSize="12sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Mic self-test (3s)" />
+                <TextView android:id="@+id/testStatus" style="@style/RowStatus" android:text="Not run" />
+                <Button android:id="@+id/testBtn" style="@style/RowBtn" android:text="Test" />
+            </LinearLayout>
         </LinearLayout>
 
         <!-- ===== AI MODEL ===== -->

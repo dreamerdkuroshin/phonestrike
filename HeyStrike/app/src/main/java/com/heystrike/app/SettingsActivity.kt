@@ -5,6 +5,9 @@ import android.app.Activity
 import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -16,6 +19,13 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import org.json.JSONObject
+import org.vosk.Model
+import org.vosk.Recognizer
+import java.io.ByteArrayOutputStream
+import kotlin.math.log10
+import kotlin.math.max
+import kotlin.math.sqrt
 
 /**
  * Categorized settings: ASSISTANT / VOICE / AI MODEL / PHONE CONTROL /
@@ -145,6 +155,7 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
         findViewById<Button>(R.id.modelBtn).setOnClickListener { downloadModels() }
+        findViewById<Button>(R.id.testBtn).setOnClickListener { micTest() }
         findViewById<Button>(R.id.langBtn).setOnClickListener {
             val next = if (Prefs.voiceLang(this) == "hi") "en" else "hi"
             Prefs.setVoiceLang(this, next)
@@ -180,6 +191,83 @@ class SettingsActivity : AppCompatActivity() {
     private fun refreshLangRow() {
         findViewById<TextView>(R.id.langStatus).text =
             if (Prefs.voiceLang(this) == "hi") "Hindi / Hinglish" else "English"
+    }
+
+    /**
+     * Mic self-test: 3s capture through the REAL wake pipeline (same audio
+     * source, same Vosk model + grammar). Reports mic level + what the model
+     * heard — turns "wake word doesn't work" into evidence.
+     */
+    private fun micTest() {
+        val st = findViewById<TextView>(R.id.testStatus)
+        st.text = "Listening 3s — say “Hey Strike”…"
+        Thread {
+            val msg = try {
+                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+                    PackageManager.PERMISSION_GRANTED
+                ) throw RuntimeException("mic permission denied — tap Grant")
+                val min = AudioRecord.getMinBufferSize(
+                    16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+                val ar = AudioRecord(
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    16000, AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT, max(min * 2, 8192))
+                if (ar.state != AudioRecord.STATE_INITIALIZED)
+                    throw RuntimeException("AudioRecord init failed (mic held by another app?)")
+                ar.startRecording()
+                val buf = ByteArray(4096)
+                val rec = ByteArrayOutputStream()
+                var peak = 0.0
+                val t0 = System.currentTimeMillis()
+                while (System.currentTimeMillis() - t0 < 3000) {
+                    val n = ar.read(buf, 0, buf.size)
+                    if (n > 0) {
+                        rec.write(buf, 0, n)
+                        var sum = 0.0
+                        var c = 0
+                        var i = 0
+                        while (i + 1 < n) {
+                            val s = (((buf[i + 1].toInt() shl 8) or
+                                (buf[i].toInt() and 0xFF))) / 32768.0
+                            sum += s * s
+                            c++
+                            i += 2
+                        }
+                        peak = max(peak, sqrt(sum / max(c, 1)))
+                    }
+                }
+                try { ar.stop() } catch (_: Exception) {}
+                ar.release()
+                val db = 20 * log10(max(peak, 1e-4))
+                val dir = if (Prefs.voiceLang(this) == "hi") ModelManager.hiDir(this)
+                else ModelManager.dir(this)
+                val heard = try {
+                    val m = Model(dir.absolutePath)
+                    val r = Recognizer(m, 16000f, "[\"hey strike\"]")
+                    val bytes = rec.toByteArray()
+                    var off = 0
+                    while (off < bytes.size) {
+                        val n = minOf(4096, bytes.size - off)
+                        r.acceptWaveForm(bytes.copyOfRange(off, off + n), n)
+                        off += n
+                    }
+                    val fin = JSONObject(r.finalResult).optString("text", "")
+                    try { r.close() } catch (_: Exception) {}
+                    try { m.close() } catch (_: Exception) {}
+                    fin.ifBlank { "(nothing decoded)" }
+                } catch (e: Exception) {
+                    "model error: ${e.message}"
+                }
+                val micVerdict = if (db < -45) "SILENCE — mic blocked/held?" else "sound OK"
+                "Mic peak %.0f dB (%s) · heard: “%s”".format(db, micVerdict, heard)
+            } catch (e: Exception) {
+                "FAILED: ${e.message}"
+            }
+            runOnUiThread {
+                st.text = msg
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+            }
+        }.start()
     }
 
     /** Shared by Download button + Start-button precondition + Hindi switch. */
