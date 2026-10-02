@@ -15,6 +15,9 @@ object ConversationManager {
     private const val MAX_TURNS = 8
     private const val TURN_CHARS = 240
     private const val GAP_MS = 30 * 60 * 1000L
+    // long-term memory of past queries: survives the 30-min gap + clear()
+    private const val MEM_MAX = 12
+    private const val MEM_CHARS = 160
 
     private lateinit var sp: SharedPreferences
     private fun prefs(c: Context): SharedPreferences {
@@ -56,9 +59,12 @@ object ConversationManager {
 
     fun recordUser(c: Context, text: String) {
         conversationId(c) // refresh gap timer + id
+        val line = "Q: " + text.take(MEM_CHARS).replace('\n', ' ')
+        val mem = (prefs(c).getString("mem", "") ?: "").lines().filter { it.isNotBlank() }
         prefs(c).edit()
             .putString("last_user", text.take(TURN_CHARS))
             .putString("turns", push(prefs(c).getString("turns", "") ?: "", "user", text))
+            .putString("mem", (mem + line).takeLast(MEM_MAX).joinToString("\n"))
             .apply()
         if (topic(c).isEmpty() && text.isNotBlank()) {
             prefs(c).edit().putString("topic", topicOf(text)).apply()
@@ -107,12 +113,17 @@ object ConversationManager {
             lastReply(c).takeIf { it.isNotBlank() }?.let { append("; your last reply=\"$it\"") }
             activeTask(c).takeIf { it.isNotBlank() }?.let { append("; active task=\"$it\"") }
             lastToolResult(c).takeIf { it.isNotBlank() }?.let { append("; last tool result=\"$it\"") }
+            // long-term memory: survives sessions — "memory of past queries"
+            (prefs(c).getString("mem", "") ?: "").lines().filter { it.isNotBlank() }
+                .takeIf { it.isNotEmpty() }
+                ?.let { append("; past queries from earlier sessions: [" + it.joinToString("; ") + "]") }
             if (isFollowUp(c, text)) append("; the user is following up on this topic — interpret in that context")
             append("]\n")
         }
         return ctx + text
     }
 
+    /** Clears the current conversation only — "mem" (past-query memory) is kept on purpose. */
     fun clear(c: Context) {
         prefs(c).edit()
             .remove("turns").remove("topic").remove("last_user")

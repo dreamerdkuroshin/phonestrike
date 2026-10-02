@@ -7,6 +7,7 @@ import android.net.Uri
 import android.speech.tts.TextToSpeech
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.net.URLEncoder
 import java.net.URL
 import java.util.Locale
 
@@ -306,11 +307,57 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         StrikeAgent(ctx).run(text)
     } catch (e: Exception) { "Planner failed: ${e.message}" }
 
+    // ---------- conversation-agent enrichment (screen + live web facts) ----------
+
+    /** "what's on my screen / read my screen / what am I looking at" — answer from the a11y tree. */
+    private val screenQuery = Regex(
+        "what('s| is)? (on|this) (my )?screen|read (my|the )?screen|" +
+        "what am i (looking at|seeing)|describe (the |my )?screen|" +
+        "what('s| is) (this|on this) (app|page|screen)"
+    )
+
+    /** Live-fact cues: fetch fresh web snippets so the local LLM doesn't hallucinate recency. */
+    private val searchCue = Regex(
+        "\\b(latest|breaking|headlines?|news|price|prices|stock|stocks|weather|forecast|" +
+        "score|today|yesterday|who won|current (price|rate|news)|how much is|" +
+        "search (the )?web|google it|right now)\\b"
+    )
+
+    /** DuckDuckGo results via the server's /api/search; null = plain LLM path. */
+    private fun searchSnippet(text: String): String? {
+        if (!searchCue.containsMatchIn(text.lowercase())) return null
+        return try {
+            val q = URLEncoder.encode(text.take(160), "UTF-8")
+            val c = URL(Prefs.server(ctx) + "/api/search?q=$q").openConnection() as HttpURLConnection
+            c.connectTimeout = 8000
+            c.readTimeout = 8000
+            val arr = JSONObject(c.inputStream.bufferedReader().readText()).getJSONArray("results")
+            if (arr.length() == 0) return null
+            buildString {
+                append("Web search results for \"").append(text.take(120)).append("\":\n")
+                for (i in 0 until minOf(5, arr.length())) {
+                    val o = arr.getJSONObject(i)
+                    append("- ").append(o.optString("title")).append(": ")
+                    append(o.optString("snippet")).append('\n')
+                }
+            }
+        } catch (_: Exception) { null }
+    }
+
     /** Live token stream (ChatGPT-style): calls onToken per chunk as they arrive. */
     fun askServerStream(text: String, onDone: () -> Unit, onToken: (String) -> Unit) {
         // context enrichment stays client-side; the executor path above only
         // ever sees the FINAL transcript
-        val prompt = ConversationManager.enrich(ctx, text)
+        var prompt = ConversationManager.enrich(ctx, text)
+        // screen understanding: prepend the live a11y tree for screen queries
+        if (screenQuery.containsMatchIn(text.lowercase())) {
+            prompt = "Current screen contents (from accessibility service):\n" +
+                StrikeAgent(ctx).observe() + "\n\nUser asked: " + prompt
+        }
+        // live web facts first, so the prompt never starts with a server-intercepted verb
+        searchSnippet(text)?.let { web ->
+            prompt = web + "Use the results above when relevant; answer in plain spoken words.\n\nQuestion: " + text
+        }
         val answer = StringBuilder()
         try {
             val url = URL(Prefs.server(ctx) + "/api/voice/stream")

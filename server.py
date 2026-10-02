@@ -5,6 +5,7 @@
 
 import os
 import json
+import re
 import subprocess
 import shlex
 import time
@@ -767,6 +768,29 @@ def api_voice_stream():
             yield 'data: ' + _js2.dumps({"token": f"Stream error: {e}"}) + '\n\n'
             yield 'data: [DONE]\n\n'
     return Response(gen(), mimetype='text/event-stream')
+
+@app.route('/api/search', methods=['GET'])
+def api_search():
+    """Tiny live web search (DuckDuckGo HTML, no API key) for recency questions."""
+    q = str(request.args.get('q', '')).strip()[:200]
+    if not q:
+        return jsonify({"q": "", "results": [], "error": "q required"})
+    try:
+        import requests as _rq
+        from html import unescape as _unes
+        r = _rq.post("https://html.duckduckgo.com/html/", data={"q": q},
+                     headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)"}, timeout=8)
+        titles = re.findall(r'class="result__a"[^>]*>(.*?)</a>', r.text, re.S)
+        snips = re.findall(r'class="result__snippet"[^>]*>(.*?)</(?:a|div)>', r.text, re.S)
+        out = []
+        for i in range(min(5, len(titles))):
+            t = re.sub(r'<[^>]+>', '', titles[i]).strip()
+            s = re.sub(r'<[^>]+>', '', snips[i]).strip() if i < len(snips) else ""
+            if t:
+                out.append({"title": _unes(t), "snippet": _unes(s)})
+        return jsonify({"q": q, "results": out})
+    except Exception as e:
+        return jsonify({"q": q, "results": [], "error": str(e)})
 
 @app.route('/api/mobile/battery', methods=['GET'])
 def api_mobile_battery():
