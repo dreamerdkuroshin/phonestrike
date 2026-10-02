@@ -198,6 +198,10 @@ def handle_mobile_command(text):
         # avoid clash with project launcher (rehan/isair/...) – let jarvis handle those first
         if app in ("rehan", "isair", "offgrid", "automator", "omniroute", "llama"):
             return None
+        # compound task ("open whatsapp and message beru") is NOT one app name —
+        # never misreport it as unknown; let the LLM answer honestly instead
+        if " and " in app or " then " in app:
+            return None
         return mobile_open_app(app)
 
     # call
@@ -607,10 +611,18 @@ def api_upload():
         f = request.files['file']
         if f.content_length and f.content_length > 10*1024*1024:
             return jsonify({"error": "File >10MB"}), 400
-        dest = os.path.join(WORKSPACE_DIR, "uploads", f.filename)
+        # never trust the client filename (path traversal) — uuid server-side,
+        # original name kept as metadata only
+        import uuid as _uuid
+        import os.path as _osp
+        ext = _osp.splitext(f.filename or "")[1].lower()
+        if not re.fullmatch(r"\.[a-z0-9]{1,7}", ext or ""):
+            ext = ".bin"
+        name = _uuid.uuid4().hex + ext
+        dest = os.path.join(WORKSPACE_DIR, "uploads", name)
         f.save(dest)
         size_kb = round(os.path.getsize(dest)/1024, 1)
-        return jsonify({"filename": f.filename, "size_kb": size_kb})
+        return jsonify({"filename": name, "original": (f.filename or "")[:120], "size_kb": size_kb})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -648,11 +660,22 @@ def api_chat():
         sys_prompt = None
         if config.get("voice_enabled"):
             sys_prompt = "You are Strike, a phone voice assistant like Gemini. Keep spoken answers short, natural, under 60 words unless asked for detail. No markdown."
+        # follow-up context: the web UI sends full history, but only the last
+        # message reached the model — prepend up to 3 recent exchanges so
+        # "what about tomorrow?" still knows the topic
+        hist = []
+        for m in messages:
+            if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
+                continue
+            c = str(m.get("content", "")).strip()
+            if c and c != last_user:
+                hist.append({"role": m["role"], "content": c[:300]})
+        hist = hist[-6:]
         def _gen():
             try:
                 import requests as _rq2
                 base_url = get_base_url(); model = get_model(); api_key = get_api_key()
-                msgs = ([{"role": "system", "content": sys_prompt}] if sys_prompt else []) + [{"role": "user", "content": last_user}]
+                msgs = ([{"role": "system", "content": sys_prompt}] if sys_prompt else []) + hist + [{"role": "user", "content": last_user}]
                 payload = {"model": model, "messages": msgs, "stream": True}
                 headers = {"Content-Type": "application/json"}
                 if api_key: headers["Authorization"] = f"Bearer {api_key}"
@@ -928,6 +951,10 @@ def get_config():
 
 @app.route('/config', methods=['POST'])
 def update_config():
+    # config holds keys/tokens — writes only from the phone itself
+    # (setup.py runs locally); LAN clients get 403
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        return jsonify({"error": "config writes are local-only"}), 403
     global config
     data = request.json
     config = data
