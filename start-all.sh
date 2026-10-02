@@ -18,7 +18,7 @@ termux-wake-lock 2>/dev/null
 if $CURL -s -m 3 http://127.0.0.1:8081/health 2>/dev/null | grep -q ok; then
   log "✅ Llama :8081 already running."
 else
-  log "🚀 Starting Llama (pocket-qwen3, ~15s load)..."
+  log "🚀 Starting Llama (strike-coder, ~15s load)..."
   /data/data/com.termux/files/usr/bin/bash "$DIR/start-llama.sh" >> "$DIR/start-all.log" 2>&1
   for i in $(seq 1 40); do
     if $CURL -s -m 3 http://127.0.0.1:8081/health 2>/dev/null | grep -q ok; then
@@ -30,7 +30,7 @@ else
 fi
 
 # 2. PocketStrike :5000
-if $CURL -s -m 3 http://127.0.0.1:5000/api/status 2>/dev/null | grep -q pocket-qwen3; then
+if $CURL -s -m 3 http://127.0.0.1:5000/api/status 2>/dev/null | grep -q strike-coder; then
   log "✅ Strike :5000 already running."
 else
   log "🚀 Starting Strike server..."

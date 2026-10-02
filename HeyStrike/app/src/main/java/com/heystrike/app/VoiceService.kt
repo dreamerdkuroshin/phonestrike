@@ -5,49 +5,82 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.role.RoleManager
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
-import android.speech.tts.TextToSpeech
+import android.util.Log
 import androidx.core.app.NotificationCompat
-import java.util.Locale
 
 /**
- * Hosts the wake-word gate in a foreground mic service:
- * ONE AudioRecord -> Vosk gate -> beep + orb -> command -> brain -> back to gate.
- * Screen-off safe via wake lock; auto-restarts on boot via BootReceiver.
+ * Foreground mic service with TWO modes, ONE gate (StrikeVoiceController):
+ *  A. Shell mode (assistant role held): only the mic FGS + wake lock +
+ *     notification — AssistantService owns the wake-word gate.
+ *  B. Standalone mode: this service owns the gate (explicit "always listen").
+ * Never both: the controller refuses a second engine.
  */
 class VoiceService : Service() {
 
-    private var gate: GateEngine? = null
-    private var tts: TextToSpeech? = null
-    private lateinit var api: StrikeApi
     private var wakeLock: android.os.PowerManager.WakeLock? = null
+    private var shell = false
 
     override fun onBind(i: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
-        startFg("Hey Strike listening — say the wake word")
-        val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
-        wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "HeyStrike:gate")
-        try { wakeLock?.acquire(12 * 60 * 60 * 1000L) } catch (_: Exception) {}
-        tts = TextToSpeech(this) { st ->
-            if (st == TextToSpeech.SUCCESS) tts?.language = Locale.US
+        shell = isAssistantHeld()
+        if (shell) {
+            Log.i(TAG, "shell mode — assistant role active, gate owned by AssistantService")
+            startFg("Hey Strike — system assistant listening")
+        } else {
+            startFg("Hey Strike listening — say the wake word")
         }
-        api = StrikeApi(applicationContext, tts)
+        acquireWakeLock()
+
+        if (shell) return
 
         if (!ModelManager.ready(this)) {
             startFg("Open Hey Strike app → Download voice model (40MB, once)")
             return
         }
-        gate = GateEngine(
-            modelDir = ModelManager.dir(this).absolutePath,
+        if (!ModelManager.sherpaReady(this)) {
+            // background: streaming command model; first command uses Vosk fallback
+            Thread {
+                try {
+                    Log.i(TAG, "sherpa model download starting")
+                    ModelManager.downloadSherpa(applicationContext) { _, _ -> }
+                    Log.i(TAG, "sherpa model ready")
+                } catch (e: Exception) {
+                    Log.w(TAG, "sherpa download failed: ${e.message}")
+                }
+            }.start()
+        }
+        val ok = StrikeVoiceController.startWakeWord(
+            StrikeVoiceController.OWNER_VOICE,
+            applicationContext,
             onWake = { OverlayService.show(this) },
             onCommand = { text -> OverlayService.show(this, text) },
-            onError = { msg -> startFg("Gate error: $msg — reopen app to retry") }
+            onError = { msg -> startFg("Gate error: $msg — reopen app to retry") },
+            onPartial = { p -> OverlayService.inst?.showPartial(p) },
+            onInterrupt = { OverlayService.inst?.interruptAnswer() }
         )
-        gate?.start()
+        if (!ok) {
+            Log.i(TAG, "standalone gate refused — engine already active (owner=${StrikeVoiceController.currentOwner()})")
+            startFg("Wake word already active (${StrikeVoiceController.currentOwner()}).")
+        }
+    }
+
+    private fun isAssistantHeld(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        return try {
+            getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_ASSISTANT) == true
+        } catch (_: Exception) { false }
+    }
+
+    private fun acquireWakeLock() {
+        val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+        wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "HeyStrike:gate")
+        try { wakeLock?.acquire(12 * 60 * 60 * 1000L) } catch (_: Exception) {}
     }
 
     private fun startFg(text: String) {
@@ -63,7 +96,13 @@ class VoiceService : Service() {
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentIntent(pi).setOngoing(true).build()
-        startForeground(1, n)
+        try {
+            startForeground(1, n)
+        } catch (e: Exception) {
+            // background mic FGS start denied (API 34 rules) -> degrade, don't crash
+            Log.e(TAG, "foreground start declined: ${e.message}")
+            stopSelf()
+        }
     }
 
     override fun onStartCommand(i: Intent?, f: Int, id: Int): Int = START_STICKY
@@ -77,9 +116,13 @@ class VoiceService : Service() {
     }
 
     override fun onDestroy() {
-        try { gate?.stop() } catch (_: Exception) {}
+        // no-op when another owner holds the gate (ownership check inside)
+        StrikeVoiceController.stopWakeWord(StrikeVoiceController.OWNER_VOICE)
         try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}
-        tts?.shutdown()
         super.onDestroy()
+    }
+
+    companion object {
+        const val TAG = "HeyStrikeAssistant"
     }
 }

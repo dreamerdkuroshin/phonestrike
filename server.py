@@ -412,7 +412,7 @@ def jarvis_commander(command):
     if command.startswith("switch to "):
         model = command.replace("switch to", "").strip()
         if not model:
-            return "❌ Usage: switch to MODEL_NAME (e.g., switch to pocket-qwen3)"
+            return "❌ Usage: switch to MODEL_NAME (e.g., switch to strike-coder)"
         
         try:
             with open(CONFIG_PATH, 'r') as f:
@@ -533,7 +533,7 @@ def chat():
             return jsonify({"response": text})
         except Exception as e:
             base_url = get_base_url()
-            return jsonify({"response": f"❌ AI Connection Error: {str(e)}\n🔗 Backend: {base_url}\n💡 Fix: start backend with: ~/llama.cpp/build/bin/llama-server -m ~/models/pocket-qwen3-1.7b-abliterated-q3km.gguf --host 127.0.0.1 --port 8081 -a pocket-qwen3 --ctx-size 2048 -t 4"})
+            return jsonify({"response": f"❌ AI Connection Error: {str(e)}\n🔗 Backend: {base_url}\n💡 Fix: start backend with: ~/llama.cpp/build/bin/llama-server -m ~/models/strike-coder-1.7b-abliterated-q3km.gguf --host 127.0.0.1 --port 8081 -a strike-coder --ctx-size 2048 -t 4"})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500

@@ -10,6 +10,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // sherpa-onnx AAR (k2-fsa) — JitPack
+        maven("https://jitpack.io")
     }
 }
 rootProject.name = "HeyStrike"

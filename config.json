@@ -1,0 +1,11 @@
+{
+  "provider": "custom",
+  "provider_name": "Custom API (OpenAI Compatible)",
+  "api_key": "",
+  "base_url": "http://127.0.0.1:8081/v1",
+  "model": "model",
+  "telegram_enabled": false,
+  "telegram_token": "",
+  "shizuku_enabled": true,
+  "voice_enabled": true
+}
