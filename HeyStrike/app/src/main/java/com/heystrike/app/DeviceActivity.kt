@@ -38,12 +38,10 @@ class DeviceActivity : AppCompatActivity() {
             launchPkg("com.google.android.documentsui", "Files app not found")
         }
         findViewById<Button>(R.id.actScreen).setOnClickListener {
-            startActivity(Intent(this, ScreenShotActivity::class.java)
-                .putExtra("q", "Describe what's on screen."))
+            askVision("screen", "Describe what's on screen.")
         }
         findViewById<Button>(R.id.actCamera).setOnClickListener {
-            startActivity(Intent(this, CameraActivity::class.java)
-                .putExtra("q", "What am I looking at?"))
+            askVision("camera", "What am I looking at?")
         }
         findViewById<Button>(R.id.actTermux).setOnClickListener {
             launchPkg("com.termux", "Termux not installed")
@@ -75,6 +73,26 @@ class DeviceActivity : AppCompatActivity() {
         val i = packageManager.getLaunchIntentForPackage(pkg)
         if (i == null) Toast.makeText(this, missing, Toast.LENGTH_SHORT).show()
         else startActivity(i)
+    }
+
+    /**
+     * Standalone vision: run the full capture pipeline off the UI thread,
+     * then show the answer in a dialog. (Launching the activities directly
+     * drops the answer — they deliver to a voice-thread generation.)
+     */
+    private fun askVision(which: String, q: String) {
+        Toast.makeText(this, "Looking…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val ans = if (which == "screen") Vision.askScreen(applicationContext, q)
+            else Vision.askCamera(applicationContext, q)
+            runOnUiThread {
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle(if (which == "screen") "Screen" else "Camera")
+                    .setMessage(ans)
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+        }.start()
     }
 
     private fun statusText(): String {

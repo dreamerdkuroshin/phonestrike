@@ -169,6 +169,9 @@ class StrikeAgent(private val ctx: Context) {
                 doOutput = true
             }
             val payload = JSONObject()
+                // raw: prompt embeds a screen dump — instant-intent matching
+                // must not hijack it (see server /api/chat)
+                .put("raw", true)
                 .put("messages", org.json.JSONArray()
                     .put(JSONObject().put("role", "system").put("content", system))
                     .put(JSONObject().put("role", "user").put("content", user)))
