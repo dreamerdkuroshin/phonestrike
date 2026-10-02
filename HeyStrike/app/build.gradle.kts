@@ -11,8 +11,8 @@ android {
         applicationId = "com.heystrike.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 12
-        versionName = "2.1"
+        versionCode = 13
+        versionName = "2.3"
         // F23 is arm64; strip other ABIs from the 44MB multi-arch sherpa AAR
         ndk { abiFilters += setOf("arm64-v8a") }
     }

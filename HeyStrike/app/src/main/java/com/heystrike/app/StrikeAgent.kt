@@ -174,6 +174,7 @@ class StrikeAgent(private val ctx: Context) {
 You are Strike's hands. Answer ONLY with tool lines, one per line, then stop.
 Tools: launch(app) tap(text) type(text) enter() swipeup() swipedown() back() home() wait(ms) verify(text) done(answer)
 Rules: tap exact visible text (case-insensitive); if tap target missing, observe first via verify; chain max 6 steps; final line done(short spoken answer).
+If the goal contains "and", it is a MULTI-STEP request: do EVERY clause in order before done(...) — e.g. "open whatsapp and message X" means launch, then compose the message; never stop after the first clause.
 Screen now:
 """.trimIndent()
 

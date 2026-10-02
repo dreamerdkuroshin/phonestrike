@@ -289,7 +289,9 @@ class GateEngine(
                             if (endpointed && speechStarted) {
                                 onEndpoint()
                                 phase = Phase.POSSIBLE_END
-                                graceUntil = System.currentTimeMillis() + 400
+                                // 1600ms like Vosk: mid-sentence thinking pauses
+                                // ("Open WhatsApp … and message…") must not truncate
+                                graceUntil = System.currentTimeMillis() + 1600
                             }
                         }
                     }
