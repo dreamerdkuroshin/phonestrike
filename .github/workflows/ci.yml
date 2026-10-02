@@ -1,0 +1,280 @@
+name: CI
+
+# Shared CI for the azhri1990 ecosystem. This exact file is deployed unchanged
+# to every repository, so it detects what each repository actually contains
+# rather than assuming a stack. Jobs whose detected stack does not match are
+# skipped, which is reported as neutral rather than as a failure.
+#
+# Design rules, so the file stays honest as repos diverge:
+#   * Stack detection happens in the hygiene job, after checkout, and is passed
+#     to the other jobs as outputs. hashFiles() is not available in a job-level
+#     if: because it needs a checkout first, so detection cannot live there.
+#   * A skipped job is not a passing job. Anything that cannot run cleanly must
+#     fail loudly instead of being silently skipped.
+#   * The npm "no test specified" placeholder exits 1. It is detected and
+#     skipped explicitly, so a missing test suite is never reported as a green
+#     test run and never reported as a failure either.
+#   * The hygiene job is unconditional. It is the only part that applies to a
+#     repository holding a single README, and it is what catches the two real
+#     problems found in this ecosystem: a public repository tracking 119k
+#     node_modules files, and a public repository tracking a populated .env
+#     containing an encryption key.
+
+on:
+  # No branch filter. This file is deployed unchanged to every repository, and
+  # two of them (jarvis-agent, jarvis-scripts) use "master" as their default
+  # branch. A "branches: [main]" filter would silently never fire there, which
+  # is the same failure as having no CI at all.
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hygiene:
+    name: Hygiene
+    runs-on: ubuntu-latest
+    outputs:
+      shell: ${{ steps.detect.outputs.shell }}
+      node: ${{ steps.detect.outputs.node }}
+      python: ${{ steps.detect.outputs.python }}
+      python-tests: ${{ steps.detect.outputs.python-tests }}
+      python-test-path: ${{ steps.detect.outputs.python-test-path }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Detect stack
+        id: detect
+        run: |
+          set -euo pipefail
+          if git ls-files '*.sh' | grep -q .; then
+            echo "shell=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "shell=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -f package.json ]; then
+            echo "node=true"   >> "$GITHUB_OUTPUT"
+          else
+            echo "node=false"  >> "$GITHUB_OUTPUT"
+          fi
+          if [ -f requirements.txt ] || [ -f requirements-test.txt ] || [ -f pyproject.toml ]; then
+            echo "python=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "python=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Only a top-level tests/ or test/ counts. These repositories are
+          # often monorepos of vendored copies (project-genesis carries 19k
+          # files including a full NAS-HARNESS checkout, which brings its own
+          # tests/), so a repository-wide collection picks up other projects'
+          # suites and fails on their uninstalled dependencies.
+          if [ -d tests ] && git ls-files 'tests/*' | grep -q .; then
+            echo "python-tests=true"     >> "$GITHUB_OUTPUT"
+            echo "python-test-path=tests" >> "$GITHUB_OUTPUT"
+          elif [ -d test ] && git ls-files 'test/*' | grep -q .; then
+            echo "python-tests=true"    >> "$GITHUB_OUTPUT"
+            echo "python-test-path=test" >> "$GITHUB_OUTPUT"
+          else
+            echo "python-tests=false"     >> "$GITHUB_OUTPUT"
+            echo "python-test-path="      >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "### Detected stack"
+            echo ""
+            echo "| Job | Runs |"
+            echo "| --- | --- |"
+            echo "| Hygiene | always |"
+            echo "| Shell | $(git ls-files '*.sh' | wc -l) shell scripts |"
+            echo "| Node | $([ -f package.json ] && echo yes || echo no) |"
+            echo "| Python | $([ -f requirements.txt ] || [ -f requirements-test.txt ] || [ -f pyproject.toml ] && echo yes || echo no) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: No committed dependency trees
+        run: |
+          tracked=$(git ls-files | grep -E '^(node_modules/|\.venv/|venv/|__pycache__/|vendor/bundle/)' || true)
+          if [ -n "$tracked" ]; then
+            count=$(printf '%s\n' "$tracked" | wc -l)
+            echo "::error::$count tracked path(s) live inside a dependency directory. Untrack them and add a .gitignore."
+            printf '%s\n' "$tracked" | head -20
+            exit 1
+          fi
+
+      - name: No committed environment files
+        run: |
+          tracked=$(git ls-files | grep -E '(^|/)\.env$' || true)
+          if [ -n "$tracked" ]; then
+            echo "::error::a populated .env is tracked. Untrack it, add a .gitignore, and commit a .env.example instead."
+            printf '%s\n' "$tracked" | head -20
+            exit 1
+          fi
+
+      - name: README present
+        run: |
+          if [ -z "$(git ls-files | grep -iE '^readme(\.(md|rst|txt))?$')" ]; then
+            echo "::error::no README at the repository root"
+            exit 1
+          fi
+
+      - name: No unresolved merge conflict markers
+        run: |
+          # Only the unambiguous directions. A bare "=======" is a setext
+          # heading in Markdown and a directive underline in RST, so matching it
+          # would fail legitimate documentation.
+          if git grep -nIE '^(<{7}|>{7})( |$)' -- . ; then
+            echo "::error::unresolved merge conflict markers"
+            exit 1
+          fi
+
+      - name: No whitespace errors in this change
+        run: git diff --check
+
+  shell:
+    name: Shell
+    needs: hygiene
+    if: needs.hygiene.outputs.shell == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+
+      - name: Parse every tracked shell script
+        run: |
+          status=0
+          while IFS= read -r script; do
+            [ -n "$script" ] || continue
+            bash -n "$script" || status=1
+          done < <(git ls-files '*.sh')
+          exit "$status"
+
+      - name: ShellCheck errors
+        # -S error, not -S warning: warnings across 80+ pre-existing scripts are
+        # a style backlog, and failing on them would mean either a large
+        # unrelated cleanup or a permanently red job. Real errors still block.
+        run: |
+          status=0
+          while IFS= read -r script; do
+            [ -n "$script" ] || continue
+            shellcheck -S error "$script" || status=1
+          done < <(git ls-files '*.sh')
+          exit "$status"
+
+  node:
+    name: Node
+    needs: hygiene
+    if: needs.hygiene.outputs.node == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          else
+            echo "::warning::no package-lock.json; installing without a lockfile is not reproducible"
+            npm install --no-audit --no-fund --package-lock=false
+          fi
+
+      - name: Find available scripts
+        id: scripts
+        run: |
+          for name in build typecheck lint test; do
+            if node -e '
+              const scripts = require("./package.json").scripts || {};
+              const cmd = scripts[process.argv[1]] || "";
+              if (!cmd) process.exit(1);
+              if (/no test specified/i.test(cmd)) process.exit(1);
+              process.exit(0);
+            ' "$name"; then
+              echo "has-$name=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "has-$name=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+          echo "scripts: $(grep -oE 'has-[a-z]+=true' "$GITHUB_OUTPUT" | sed 's/has-//;s/=true//' | tr '\n' ' ')" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build
+        if: steps.scripts.outputs.has-build == 'true'
+        run: npm run build
+
+      - name: Typecheck
+        if: steps.scripts.outputs.has-typecheck == 'true'
+        run: npm run typecheck
+
+      - name: Lint
+        if: steps.scripts.outputs.has-lint == 'true'
+        run: npm run lint
+
+      - name: Test
+        if: steps.scripts.outputs.has-test == 'true'
+        run: npm test
+
+  python:
+    name: Python
+    needs: hygiene
+    if: needs.hygiene.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m venv .ci-venv
+          # Put the venv on PATH for every later step. A test that shells out to
+          # "pytest" (rather than importing it) does not see a virtualenv that
+          # is only reachable by absolute path, and fails with a misleading
+          # "pytest: not found".
+          echo "$PWD/.ci-venv/bin" >> "$GITHUB_PATH"
+          .ci-venv/bin/python -m pip install --quiet --upgrade pip
+          for req in requirements-test.txt requirements.txt; do
+            if [ -f "$req" ]; then
+              .ci-venv/bin/python -m pip install --quiet -r "$req"
+            fi
+          done
+          if [ -f pyproject.toml ]; then
+            .ci-venv/bin/python -m pip install --quiet -e . || echo "::warning::editable install failed; continuing with test dependencies only"
+          fi
+          # These repositories ship a tests/ directory but do not declare pytest
+          # as a dependency, because it is a test-runner concern rather than a
+          # runtime one. Provisioning it here is the workflow's job; failing with
+          # "No module named pytest" would report a missing runner as a broken
+          # repository.
+          if [ "${{ needs.hygiene.outputs.python-tests }}" = "true" ]; then
+            .ci-venv/bin/python -m pip install --quiet pytest
+          fi
+
+      - name: Compile all Python sources
+        run: .ci-venv/bin/python -m compileall -q -x '\.ci-venv' .
+
+      - name: Run tests
+        if: needs.hygiene.outputs.python-tests == 'true'
+        # Scoped to the repository's own suite, never bare "pytest", so a
+        # vendored copy of another project cannot be collected against this
+        # venv.
+        run: .ci-venv/bin/python -m pytest -q "${{ needs.hygiene.outputs.python-test-path }}"

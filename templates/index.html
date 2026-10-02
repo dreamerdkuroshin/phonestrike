@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PocketstrikeAI - Local Chat Client</title>
+    <!-- Outfit & Inter Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo-container">
+                    <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <g stroke="url(#strokeGrad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+                            <rect x="7" y="2" width="10" height="20" rx="2" fill="url(#logoGrad)"/>
+                            <path d="M10 5H14"/>
+                            <circle cx="12" cy="18" r="1"/>
+                            <path d="M3 13C3 12 4 11 7 11" />
+                            <path d="M17 8H19C19.5 8 20 8.5 20 9C20 9.5 19.5 10 19 10H17" />
+                            <path d="M17 11H20C20.5 11 21 11.5 21 12C21 12.5 20.5 13 20 13H17" />
+                            <path d="M17 14H19C19.5 14 20 14.5 20 15C20 15.5 19.5 16 19 16H17" />
+                        </g>
+                        <defs>
+                            <linearGradient id="logoGrad" x1="3" y1="2" x2="21" y2="22" gradientUnits="userSpaceOnUse">
+                                <stop stop-color="#8B5CF6" />
+                                <stop offset="1" stop-color="#EC4899" />
+                            </linearGradient>
+                            <linearGradient id="strokeGrad" x1="3" y1="2" x2="21" y2="22" gradientUnits="userSpaceOnUse">
+                                <stop stop-color="#EC4899" />
+                                <stop offset="1" stop-color="#3B82F6" />
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                    <span class="logo-text">Pocketstrike<span>AI</span></span>
+                </div>
+                <button class="close-sidebar-btn" id="closeSidebarBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+
+            <button class="new-chat-btn" id="newChatBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                New Chat
+            </button>
+
+            <!-- Chat History List -->
+            <div class="sidebar-history-container">
+                <div class="history-label">Recent Chats</div>
+                <div class="sidebar-history" id="sidebarHistory">
+                    <!-- Chats injected via JS -->
+                </div>
+            </div>
+
+            <!-- MCP Connections Section -->
+            <div class="sidebar-mcp-container">
+                <div class="mcp-header-row">
+                    <span class="history-label">MCP Connections</span>
+                    <button class="add-mcp-btn" id="addMcpBtn" title="Connect Remote MCP Server">+</button>
+                </div>
+                <div class="sidebar-mcp-list" id="sidebarMcpList">
+                    <!-- MCP Connections injected via JS -->
+                </div>
+            </div>
+
+            <!-- Sidebar Footer Status -->
+            <div class="sidebar-footer" id="sidebarFooter">
+                <div class="status-card">
+                    <div class="status-row">
+                        <span class="status-label">Provider:</span>
+                        <span class="status-value" id="statusProvider">Loading...</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Model:</span>
+                        <span class="status-value highlight" id="statusModel">Loading...</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Telegram:</span>
+                        <span class="status-value-tg" id="statusTelegram">
+                            <span class="status-dot"></span>
+                            <span class="status-tg-text">Loading...</span>
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="app-header">
+                <button class="menu-btn" id="menuBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+                </button>
+                <div class="header-model-info">
+                    <span class="model-badge" id="headerModelBadge">Connecting...</span>
+                </div>
+                <div class="header-right-actions" style="display: flex; gap: 0.5rem; align-items: center;">
+                    <button class="voice-btn" id="voiceBtn" title="Voice Assistant Mode ('Hey Strike')">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                            <line x1="12" y1="19" x2="12" y2="23"></line>
+                            <line x1="10" y1="23" x2="14" y2="23"></line>
+                        </svg>
+                    </button>
+                    <button class="theme-toggle-btn" id="themeToggleBtn" title="Toggle Light/Dark Mode">
+                        <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path id="themeIconPath" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                    </button>
+                    <button class="clear-btn" id="clearBtn" title="Clear Chat History">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Chat Window -->
+            <div class="chat-window">
+                <!-- Welcome Screen -->
+                <div class="welcome-screen" id="welcomeScreen">
+                    <div class="welcome-header">
+                        <div class="glowing-logo">
+                            <svg class="welcome-logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <g stroke="url(#welcomeStrokeGrad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+                                    <rect x="7" y="2" width="10" height="20" rx="2" fill="url(#welcomeGrad)"/>
+                                    <path d="M10 5H14"/>
+                                    <circle cx="12" cy="18" r="1"/>
+                                    <path d="M3 13C3 12 4 11 7 11" />
+                                    <path d="M17 8H19C19.5 8 20 8.5 20 9C20 9.5 19.5 10 19 10H17" />
+                                    <path d="M17 11H20C20.5 11 21 11.5 21 12C21 12.5 20.5 13 20 13H17" />
+                                    <path d="M17 14H19C19.5 14 20 14.5 20 15C20 15.5 19.5 16 19 16H17" />
+                                </g>
+                                <defs>
+                                    <linearGradient id="welcomeGrad" x1="3" y1="2" x2="21" y2="22" gradientUnits="userSpaceOnUse">
+                                        <stop stop-color="#8B5CF6" />
+                                        <stop offset="1" stop-color="#EC4899" />
+                                    </linearGradient>
+                                    <linearGradient id="welcomeStrokeGrad" x1="3" y1="2" x2="21" y2="22" gradientUnits="userSpaceOnUse">
+                                        <stop stop-color="#EC4899" />
+                                        <stop offset="1" stop-color="#3B82F6" />
+                                    </linearGradient>
+                                </defs>
+                            </svg>
+                        </div>
+                        <h1>What can I create for you today?</h1>
+                        <p id="welcomeSubnote">PocketstrikeAI is online and running locally on your phone.</p>
+                    </div>
+
+                    <!-- Suggestions Grid -->
+                    <div class="suggestions-grid">
+                        <div class="suggestion-card" onclick="fillPrompt('Run a complete system process monitor check and identify high CPU tasks.')">
+                            <h3>📊 Process Monitor</h3>
+                            <p>"Audit active system processes..."</p>
+                        </div>
+                        <div class="suggestion-card" onclick="fillPrompt('Audit my local network and check for active ARP spoofing or MITM threats.')">
+                            <h3>🛡️ Network MITM Audit</h3>
+                            <p>"Detect ARP spoofing & MITM..."</p>
+                        </div>
+                        <div class="suggestion-card" onclick="fillPrompt('Analyze the APK file sample.apk in my workspace for dangerous permissions.')">
+                            <h3>📦 APK Security Audit</h3>
+                            <p>"Analyze APK permissions & components..."</p>
+                        </div>
+                        <div class="suggestion-card" onclick="fillPrompt('Check if the domain test.example.com is vulnerable to subdomain takeover.')">
+                            <h3>🎯 Subdomain Takeover</h3>
+                            <p>"Audit CNAME dangling pointers..."</p>
+                        </div>
+                        <div class="suggestion-card" onclick="fillPrompt('Decode and audit this JWT token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c')">
+                            <h3>🔑 JWT Security Analysis</h3>
+                            <p>"Decode & audit JWT token claims..."</p>
+                        </div>
+                        <div class="suggestion-card" onclick="fillPrompt('Scan my local IP subnet for connected devices and open ports.')">
+                            <h3>🔍 Subnet Port Sweep</h3>
+                            <p>"Scan local IP subnet & open ports..."</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Messages Container -->
+                <div class="messages-container" id="messagesContainer">
+                    <!-- Messages will be dynamically rendered here -->
+                </div>
+            </div>
+
+            <!-- Input Section -->
+            <footer class="chat-input-area">
+                <div class="input-container">
+                    <input type="file" id="fileInput" style="display: none;">
+                    <textarea id="chatInput" placeholder="Ask PocketstrikeAI anything..." rows="1"></textarea>
+                    <div class="input-actions">
+                        <button class="action-btn" id="attachBtn" title="Attach file">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+                        </button>
+                        <button class="action-btn voice-input-btn" id="voiceInputBtn" title="Voice Assistant ('Hey Strike' / 'Hey Jarvis')">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                                <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                                <line x1="12" y1="19" x2="12" y2="23"></line>
+                                <line x1="10" y1="23" x2="14" y2="23"></line>
+                            </svg>
+                        </button>
+                        <button class="send-btn" id="sendBtn" title="Send message">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="footer-note">
+                    PocketstrikeAI v1.0 • Running locally in Termux
+                </div>
+            </footer>
+        </main>
+    </div>
+
+    <!-- Overlay for mobile sidebar -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <!-- Add MCP Connection Modal -->
+    <div class="modal-backdrop" id="mcpModal">
+        <div class="modal-content">
+            <h2>Connect MCP Server</h2>
+            <p class="modal-subtext">Integrate remote tools into your AI using SSE or Streamable HTTP.</p>
+            <div class="form-group">
+                <label for="mcpName">Server Name</label>
+                <input type="text" id="mcpName" placeholder="e.g. cloud-database" required>
+            </div>
+            <div class="form-group" id="mcpUrlGroup">
+                <label for="mcpUrl">SSE / HTTP Endpoint URL</label>
+                <input type="url" id="mcpUrl" placeholder="e.g. https://bizarre-gold-antelope.fastmcp.app/mcp">
+            </div>
+            <div class="modal-actions">
+                <button class="modal-cancel-btn" id="mcpCancelBtn">Cancel</button>
+                <button class="modal-submit-btn" id="mcpSubmitBtn">Connect</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🎙️ Google Assistant / JARVIS Floating Voice HUD -->
+    <div class="voice-assistant-overlay" id="voiceAssistantOverlay">
+        <div class="voice-hud-glow"></div>
+        <div class="voice-hud-container">
+            <div class="voice-hud-top">
+                <div class="voice-hud-status-badge">
+                    <span class="voice-hud-dot"></span>
+                    <span class="voice-hud-status-text" id="voiceHudStatus">Listening...</span>
+                </div>
+                <button class="voice-hud-close-btn" id="voiceHudClose" title="Dismiss Voice Assistant">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            <div class="voice-hud-middle">
+                <div class="voice-hud-transcript-box">
+                    <p class="voice-hud-transcript" id="voiceHudTranscript">Say "Hey Strike" or speak a command...</p>
+                </div>
+            </div>
+            <div class="voice-hud-bottom">
+                <div class="voice-hud-visualizer" id="voiceHudVisualizer">
+                    <span class="voice-wave-bar bar-1"></span>
+                    <span class="voice-wave-bar bar-2"></span>
+                    <span class="voice-wave-bar bar-3"></span>
+                    <span class="voice-wave-bar bar-4"></span>
+                    <span class="voice-wave-bar bar-5"></span>
+                </div>
+                <span class="voice-hud-tip">Listening for "Hey Strike" • Tap screen to cancel</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>

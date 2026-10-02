@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Strike" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/strike_bg</item>
+        <item name="android:statusBarColor">@color/strike_bg</item>
+        <item name="android:navigationBarColor">@color/strike_bg</item>
+        <item name="android:textColorPrimary">@color/strike_text</item>
+        <item name="android:textColorSecondary">@color/strike_text2</item>
+        <item name="colorAccent">@color/strike_accent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <style name="SectionHeader">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">20dp</item>
+        <item name="android:textColor">@color/strike_text2</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.12</item>
+    </style>
+
+    <style name="RowTitle">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:textColor">@color/strike_text</item>
+        <item name="android:textSize">15sp</item>
+    </style>
+
+    <style name="RowStatus">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginEnd">8dp</item>
+        <item name="android:text">—</item>
+        <item name="android:textColor">@color/strike_text2</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+
+    <style name="RowBtn">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:background">@drawable/bg_chip</item>
+        <item name="android:backgroundTint">@null</item>
+        <item name="android:textColor">@color/strike_text</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">16dp</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
+
+    <style name="RowSpacer">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">1dp</item>
+        <item name="android:layout_weight">1</item>
+    </style>
+</resources>

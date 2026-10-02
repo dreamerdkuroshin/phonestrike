@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ultimate Jarvis Commander</title>
+    <style>
+        body { font-family: sans-serif; background: #0a0a0a; color: #00ffcc; text-align: center; padding: 50px; }
+        input, button { padding: 10px; margin: 5px; border-radius: 5px; border: none; }
+        input { width: 60%; background: #1a1a1a; color: #fff; }
+        button { background: #00ffcc; color: #000; cursor: pointer; }
+        #output { margin-top: 20px; background: #111; padding: 20px; border-radius: 10px; text-align: left; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h1>🦾 Ultimate Jarvis Commander</h1>
+    <p>Type a command or ask a question</p>
+    <input id="msg" placeholder="e.g. help, status, draw a sunset" />
+    <button onclick="send()">Send</button>
+    <div id="output"></div>
+    <script>
+        async function send() {
+            const msg = document.getElementById('msg').value;
+            const out = document.getElementById('output');
+            out.innerText = 'Thinking...';
+            try {
+                const res = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: msg })
+                });
+                const data = await res.json();
+                out.innerText = data.response || data.error || 'No response';
+            } catch(e) {
+                out.innerText = 'Error: ' + e.message;
+            }
+        }
+        document.getElementById('msg').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') send();
+        });
+    </script>
+</body>
+</html>

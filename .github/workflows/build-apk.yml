@@ -1,0 +1,25 @@
+name: Build HeyStrike APK
+on:
+  push:
+    paths: ["HeyStrike/**"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: HeyStrike
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v3
+      - run: chmod +x gradlew || true
+      - run: gradle :app:assembleRelease --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HeyStrike-release-apk
+          path: HeyStrike/app/build/outputs/apk/release/app-release.apk
