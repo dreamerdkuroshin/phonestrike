@@ -14,6 +14,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Find + open installed apps (WhatsApp etc.) -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- Resolve contacts ("message Beru") — lookup only, nothing is sent -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- Phone tasks -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.SEND_SMS" />
@@ -29,7 +31,7 @@
 
     <application
         android:label="Hey Strike"
-        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"
+        android:theme="@style/Theme.Strike"
         android:usesCleartextTraffic="true"
         android:allowBackup="false">
 
@@ -40,7 +42,16 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Assistant-role fallback: Android queries ACTION_ASSIST activities -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false" />
 
         <service
             android:name=".VoiceService"
@@ -84,6 +95,7 @@
 
         <service
             android:name=".OverlayService"
+            android:foregroundServiceType="microphone"
             android:exported="false" />
 
         <receiver

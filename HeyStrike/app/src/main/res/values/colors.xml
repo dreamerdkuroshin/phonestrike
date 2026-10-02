@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="strike_bg">#0B0D10</color>
+    <color name="strike_surface">#15181D</color>
+    <color name="strike_border">#232830</color>
+    <color name="strike_accent">#7C3AED</color>
+    <color name="strike_accent_deep">#6D28D9</color>
+    <color name="strike_blue">#3B82F6</color>
+    <color name="strike_text">#E8EAED</color>
+    <color name="strike_text2">#9AA0A6</color>
+    <color name="strike_ok">#34D399</color>
+    <color name="strike_warn">#FBBF24</color>
+    <color name="strike_err">#F87171</color>
+</resources>

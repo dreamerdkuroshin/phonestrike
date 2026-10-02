@@ -1,118 +1,286 @@
 package com.heystrike.app
 
-import android.Manifest
+import android.app.role.RoleManager
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
-import android.widget.Button
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.BaseAdapter
 import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.ListView
 import android.widget.TextView
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
+import java.util.Calendar
 
-/** Home screen: permission setup + server address + tap-to-talk. */
+/**
+ * Home: top bar + connection dot, time-aware greeting with live voice-state
+ * subtitle, quick-action chips, chat bubbles (ConversationManager turns),
+ * task card with Stop, pinned mic, text input. Settings live in SettingsActivity.
+ */
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var serverBox: EditText
-    private lateinit var statusText: TextView
+    private lateinit var greeting: TextView
+    private lateinit var subtitle: TextView
+    private lateinit var connDot: View
+    private lateinit var chipScroll: View
+    private lateinit var chatList: ListView
+    private lateinit var taskCard: View
+    private lateinit var taskTitle: TextView
+    private lateinit var taskStep: TextView
+    private lateinit var statusLine: TextView
+    private lateinit var textBox: EditText
+
+    private val items = mutableListOf<Pair<String, String>>()
+    private var liveIdx = -1 // index of the in-flight Strike bubble
+    private lateinit var adapter: BubbleAdapter
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val api by lazy { StrikeApi(applicationContext, null) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // ACTION_ASSIST: launched as system assistant — show the orb, not home
+        if (intent?.action == Intent.ACTION_ASSIST) {
+            OverlayService.show(this)
+            finish()
+            return
+        }
+
         setContentView(R.layout.activity_main)
 
-        serverBox = findViewById(R.id.serverBox)
-        statusText = findViewById(R.id.statusText)
-        serverBox.setText(Prefs.server(this))
-        try {
-            val pi = packageManager.getPackageInfo(packageName, 0)
-            statusText.text = "Hey Strike v${pi.versionName} — grant 1→7, then Talk."
-        } catch (_: Exception) {}
+        greeting = findViewById(R.id.greeting)
+        subtitle = findViewById(R.id.subtitle)
+        connDot = findViewById(R.id.connDot)
+        chipScroll = findViewById(R.id.chipScroll)
+        chatList = findViewById(R.id.chatList)
+        taskCard = findViewById(R.id.taskCard)
+        taskTitle = findViewById(R.id.taskTitle)
+        taskStep = findViewById(R.id.taskStep)
+        statusLine = findViewById(R.id.statusLine)
+        textBox = findViewById(R.id.textBox)
 
-        findViewById<Button>(R.id.grantBtn).setOnClickListener { askPermissions() }
-        findViewById<Button>(R.id.overlayBtn).setOnClickListener { askOverlay() }
-        findViewById<Button>(R.id.saveBtn).setOnClickListener {
-            Prefs.saveServer(this, serverBox.text.toString().trim())
-            Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
+        greeting.text = greet()
+
+        adapter = BubbleAdapter()
+        chatList.adapter = adapter
+        reloadTurns()
+
+        findViewById<ImageButton>(R.id.settingsBtn).setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
         }
-        findViewById<Button>(R.id.startBtn).setOnClickListener {
-            Prefs.saveServer(this, serverBox.text.toString().trim())
-            startService(Intent(this, VoiceService::class.java))
-            statusText.text = "Listening service ON. Say \"Hey Strike\"."
-        }
-        findViewById<Button>(R.id.talkBtn).setOnClickListener {
-            Prefs.saveServer(this, serverBox.text.toString().trim())
+        findViewById<ImageButton>(R.id.micBtn).setOnClickListener {
             OverlayService.show(this)
         }
-        findViewById<Button>(R.id.modelBtn).setOnClickListener {
-            statusText.text = "Downloading voice model (40MB, once)…"
-            Thread {
-                try {
-                    ModelManager.download(this) { done, total ->
-                        runOnUiThread {
-                            statusText.text = "Voice model: ${done / 1048576}MB / ${total / 1048576}MB"
-                        }
-                    }
-                    runOnUiThread { statusText.text = "Voice model ready. Start listening." }
-                } catch (e: Exception) {
-                    runOnUiThread { statusText.text = "Model download failed: ${e.message}" }
-                }
-            }.start()
+        findViewById<ImageButton>(R.id.sendBtn).setOnClickListener {
+            send(textBox.text.toString())
         }
-        findViewById<Button>(R.id.assistantBtn).setOnClickListener {
-            // P1: land exactly on the system picker (RoleManager.requestRole
-            // is not callable on this API), then report held/not-held.
-            try {
-                if (android.os.Build.VERSION.SDK_INT >= 29) {
-                    val rm = getSystemService(android.app.role.RoleManager::class.java)
-                    if (rm.isRoleHeld(android.app.role.RoleManager.ROLE_ASSISTANT)) {
-                        statusText.text = "Already the default assistant. Say Hey Strike."
-                        return@setOnClickListener
+        textBox.setOnEditorActionListener { _, _, _ ->
+            send(textBox.text.toString()); true
+        }
+        findViewById<TextView>(R.id.chipChrome).setOnClickListener { send("open chrome") }
+        findViewById<TextView>(R.id.chipWhatsApp).setOnClickListener { send("open whatsapp") }
+        findViewById<TextView>(R.id.chipYouTube).setOnClickListener { send("open youtube") }
+        findViewById<TextView>(R.id.chipSettings).setOnClickListener { send("open settings") }
+        findViewById<TextView>(R.id.stopBtn).setOnClickListener {
+            StrikeAgent.stopRequested = true
+            taskStep.text = "Stopping…"
+        }
+
+        renderState(StrikeVoiceController.state)
+        refreshTaskCard()
+        refreshConnectionDot()
+    }
+
+    private fun greet(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
+        in 5..11 -> "Good morning"
+        in 12..16 -> "Good afternoon"
+        else -> "Good evening"
+    }
+
+    // ---- chat ----
+
+    private fun reloadTurns() {
+        val t = ConversationManager.turns(this)
+        items.clear()
+        items.addAll(t)
+        liveIdx = -1
+        adapter.notifyDataSetChanged()
+        chipScroll.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
+        scrollChat()
+    }
+
+    private fun send(raw: String) {
+        val text = raw.trim()
+        if (text.isEmpty()) return
+        textBox.setText("")
+        chipScroll.visibility = View.GONE
+        items.add("user" to text)
+        items.add("strike" to "")
+        liveIdx = items.size - 1
+        adapter.notifyDataSetChanged()
+        scrollChat()
+        Thread {
+            api.handleStream(text,
+                onToken = { tok ->
+                    runOnUiThread {
+                        if (liveIdx < 0 || liveIdx >= items.size) return@runOnUiThread
+                        items[liveIdx] = "strike" to (items[liveIdx].second + tok)
+                        adapter.notifyDataSetChanged()
+                        scrollChat()
                     }
-                }
+                },
+                onDone = {
+                    runOnUiThread {
+                        // local intents are not recorded by StrikeApi; recordAnswer is
+                        // idempotent for AI answers that already were (stream + voice).
+                        val done = if (liveIdx in items.indices) items[liveIdx].second else ""
+                        if (done.isNotBlank()) ConversationManager.recordAnswer(this, done)
+                        liveIdx = -1
+                        reloadTurns()
+                        refreshTaskCard()
+                        renderState(StrikeVoiceController.state)
+                    }
+                })
+        }.start()
+    }
+
+    private fun scrollChat() {
+        main.post { chatList.setSelection(items.size - 1) }
+    }
+
+    private fun refreshTaskCard() {
+        val task = ConversationManager.activeTask(this)
+        val step = ConversationManager.lastToolResult(this)
+        if (task.isBlank() && step.isBlank()) {
+            taskCard.visibility = View.GONE
+            return
+        }
+        taskCard.visibility = View.VISIBLE
+        taskTitle.text = task.ifBlank { "Task running" }
+        taskStep.text = step.ifBlank { "Working…" }
+    }
+
+    // ---- voice state -> subtitle / mic / task card ----
+
+    private val stateListener: (StrikeVoiceController.State) -> Unit = { s ->
+        renderState(s)
+        if (s == StrikeVoiceController.State.PROCESSING ||
+            s == StrikeVoiceController.State.COOLDOWN ||
+            s == StrikeVoiceController.State.IDLE ||
+            s == StrikeVoiceController.State.ASSISTANT_SPEAKING
+        ) {
+            reloadTurns()
+            refreshTaskCard()
+        }
+    }
+
+    private fun renderState(s: StrikeVoiceController.State) {
+        subtitle.text = when (s) {
+            StrikeVoiceController.State.IDLE, StrikeVoiceController.State.COOLDOWN ->
+                if (StrikeVoiceController.isRunning()) "Ready — say Hey Strike" else "Tap the mic to start"
+            StrikeVoiceController.State.WAKE_DETECTED,
+            StrikeVoiceController.State.LISTENING,
+            StrikeVoiceController.State.USER_SPEAKING,
+            StrikeVoiceController.State.POSSIBLE_END,
+            StrikeVoiceController.State.INTERRUPTED -> "Listening…"
+            StrikeVoiceController.State.PROCESSING -> "Thinking…"
+            StrikeVoiceController.State.ASSISTANT_SPEAKING -> "Speaking…"
+            StrikeVoiceController.State.ERROR -> "Mic error — open Settings"
+        }
+        statusLine.text = when {
+            s == StrikeVoiceController.State.ERROR -> "Gate error — ⚙ Settings → retry"
+            StrikeVoiceController.isRunning() -> "“Hey Strike” · ${StrikeVoiceController.stateName()}"
+            else -> "Setup needed — tap ⚙"
+        }
+    }
+
+    private fun refreshConnectionDot() {
+        Thread {
+            val ps = ping(Prefs.server(this))
+            val llm = ping("http://127.0.0.1:8081/health")
+            runOnUiThread {
+                connDot.setBackgroundResource(
+                    when {
+                        ps && llm -> R.drawable.dot_green
+                        ps || llm -> R.drawable.dot_yellow
+                        else -> R.drawable.dot_red
+                    }
+                )
+            }
+        }.start()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!::greeting.isInitialized) return // ACTION_ASSIST early-finish path
+        StrikeVoiceController.addStateListener(stateListener)
+        renderState(StrikeVoiceController.state)
+        reloadTurns()
+        refreshTaskCard()
+        refreshConnectionDot()
+        if (isAssistantHeld()) {
+            try {
+                val s = Intent(this, VoiceService::class.java)
+                if (Build.VERSION.SDK_INT >= 26) startForegroundService(s) else startService(s)
             } catch (_: Exception) {}
-            try {
-                // Opens Default apps — the Digital assistant app row is here.
-                startActivity(Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
-                statusText.text = "Pick Hey Strike under Digital assistant app, then come back."
-            } catch (_: Exception) {
-                try {
-                    startActivity(Intent(android.provider.Settings.ACTION_VOICE_INPUT_SETTINGS))
-                } catch (_: Exception) {
-                    Toast.makeText(this, "Open Settings → Apps → Default apps → Digital assistant", Toast.LENGTH_LONG).show()
-                }
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (::greeting.isInitialized) StrikeVoiceController.removeStateListener(stateListener)
+    }
+
+    private fun isAssistantHeld(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        return try {
+            getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_ASSISTANT) == true
+        } catch (_: Exception) { false }
+    }
+
+    private fun ping(url: String): Boolean = try {
+        val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        c.connectTimeout = 1500
+        c.readTimeout = 1500
+        c.requestMethod = "GET"
+        val code = c.responseCode
+        c.disconnect()
+        code in 100..599
+    } catch (_: Exception) { false }
+
+    // ---- chat bubble adapter ----
+
+    private inner class BubbleAdapter : BaseAdapter() {
+        override fun getCount() = items.size
+        override fun getItem(position: Int) = items[position]
+        override fun getItemId(position: Int) = position.toLong()
+        override fun getViewTypeCount() = 1
+        override fun isEnabled(position: Int) = false
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val v = convertView ?: LayoutInflater.from(parent.context)
+                .inflate(R.layout.item_bubble, parent, false)
+            val bubble = v.findViewById<TextView>(R.id.bubbleText)
+            val (who, text) = items[position]
+            bubble.text = text
+            val lp = bubble.layoutParams as FrameLayout.LayoutParams
+            if (who == "user") {
+                bubble.setBackgroundResource(R.drawable.bubble_user)
+                lp.gravity = Gravity.END
+                bubble.setTextColor(Color.WHITE)
+            } else {
+                bubble.setBackgroundResource(R.drawable.bubble_strike)
+                lp.gravity = Gravity.START
+                bubble.setTextColor(getColor(R.color.strike_text))
             }
+            bubble.layoutParams = lp
+            return v
         }
-        findViewById<Button>(R.id.a11yBtn).setOnClickListener {
-            try {
-                startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            } catch (_: Exception) {
-                Toast.makeText(this, "Open Settings → Accessibility → Strike Tap", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-
-    private fun askPermissions() {
-        val need = mutableListOf(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= 33) need.add(Manifest.permission.POST_NOTIFICATIONS)
-        ActivityCompat.requestPermissions(this, need.toTypedArray(), 100)
-    }
-
-    private fun askOverlay() {
-        if (!Settings.canDrawOverlays(this)) {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-            Toast.makeText(this, "Allow 'Display over other apps', then come back", Toast.LENGTH_LONG).show()
-        } else {
-            Toast.makeText(this, "Overlay already allowed", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    override fun onRequestPermissionsResult(code: Int, perms: Array<String>, res: IntArray) {
-        super.onRequestPermissionsResult(code, perms, res)
-        val ok = res.isNotEmpty() && res.all { it == PackageManager.PERMISSION_GRANTED }
-        statusText.text = if (ok) "Mic granted. Start the service." else "Mic denied — voice won't work."
     }
 }

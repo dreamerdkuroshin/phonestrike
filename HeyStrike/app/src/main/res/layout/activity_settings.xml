@@ -1,0 +1,309 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/strike_bg"
+    android:overScrollMode="never">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingTop="14dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="24dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageButton
+                android:id="@+id/backBtn"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Back to home"
+                android:rotation="180"
+                android:src="@drawable/ic_send" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:text="Settings"
+                android:textColor="@color/strike_text"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- ===== ASSISTANT ===== -->
+        <TextView
+            style="@style/SectionHeader"
+            android:text="ASSISTANT" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Default assistant" />
+                <TextView android:id="@+id/assistantStatus" style="@style/RowStatus" />
+                <Button android:id="@+id/assistantBtn" style="@style/RowBtn" android:text="Set" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Wake word (Hey Strike)" />
+                <TextView android:id="@+id/wakeStatus" style="@style/RowStatus" />
+                <Button android:id="@+id/startBtn" style="@style/RowBtn" android:text="Start" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Test the orb now" />
+                <View style="@style/RowSpacer" />
+                <Button android:id="@+id/talkBtn" style="@style/RowBtn" android:text="Talk" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ===== VOICE ===== -->
+        <TextView
+            style="@style/SectionHeader"
+            android:text="VOICE" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Microphone" />
+                <TextView android:id="@+id/micStatus" style="@style/RowStatus" />
+                <Button android:id="@+id/grantBtn" style="@style/RowBtn" android:text="Grant" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Display over apps (orb)" />
+                <TextView android:id="@+id/overlayStatus" style="@style/RowStatus" />
+                <Button android:id="@+id/overlayBtn" style="@style/RowBtn" android:text="Allow" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Voice models (Vosk + sherpa)" />
+                <TextView android:id="@+id/modelStatus" style="@style/RowStatus" />
+                <Button android:id="@+id/modelBtn" style="@style/RowBtn" android:text="Download" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/modelProgress"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text=""
+                android:textColor="@color/strike_text2"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- ===== AI MODEL ===== -->
+        <TextView
+            style="@style/SectionHeader"
+            android:text="AI MODEL" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <EditText
+                android:id="@+id/serverBox"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:background="@drawable/bg_input"
+                android:hint="http://127.0.0.1:5000"
+                android:importantForAutofill="no"
+                android:inputType="textUri"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:singleLine="true"
+                android:textColor="@color/strike_text"
+                android:textColorHint="@color/strike_text2"
+                android:textSize="14sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Endpoint" />
+                <View style="@style/RowSpacer" />
+                <Button android:id="@+id/saveBtn" style="@style/RowBtn" android:text="Save" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="PocketStrike server" />
+                <TextView android:id="@+id/psStatus" style="@style/RowStatus" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Local LLM (Qwen)" />
+                <TextView android:id="@+id/llmStatus" style="@style/RowStatus" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ===== PHONE CONTROL ===== -->
+        <TextView
+            style="@style/SectionHeader"
+            android:text="PHONE CONTROL" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Strike Tap (Accessibility)" />
+                <TextView android:id="@+id/a11yStatus" style="@style/RowStatus" />
+                <Button android:id="@+id/a11yBtn" style="@style/RowBtn" android:text="Open" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Shizuku / ADB" />
+                <TextView
+                    android:id="@+id/shizukuStatus"
+                    style="@style/RowStatus"
+                    android:text="Not in this build" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ===== SECURITY ===== -->
+        <TextView
+            style="@style/SectionHeader"
+            android:text="SECURITY" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Conversation history" />
+                <View style="@style/RowSpacer" />
+                <Button android:id="@+id/clearBtn" style="@style/RowBtn" android:text="Clear" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ===== ABOUT ===== -->
+        <TextView
+            style="@style/SectionHeader"
+            android:text="ABOUT" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Version" />
+                <TextView android:id="@+id/versionStatus" style="@style/RowStatus" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/asrInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Wake: Vosk small · Command: sherpa-onnx streaming Zipformer 20M (offline, Apache 2.0)"
+                android:textColor="@color/strike_text2"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

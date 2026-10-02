@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
@@ -11,13 +11,15 @@ android {
         applicationId = "com.heystrike.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 12
+        versionName = "2.1"
+        // F23 is arm64; strip other ABIs from the 44MB multi-arch sherpa AAR
+        ndk { abiFilters += setOf("arm64-v8a") }
     }
     signingConfigs {
         // Pinned throwaway key (HeyStrike/keystore/release.p12) so every CI
         // build shares one signature and updates install cleanly. NOT a
-        // production secret — debug-grade app key only.
+        // production secret â€” debug-grade app key only.
         create("fixed") {
             storeFile = rootProject.file("keystore/release.p12")
             storePassword = "heystrike123"
@@ -37,6 +39,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    packaging {
+        // sherpa AAR ships desktop natives (osx/win dylibs+dlls, ~110MB) â€”
+        // only lib/arm64-v8a/*.so matters on the phone
+        resources.excludes += "sherpa-onnx/native/**"
+    }
 }
 
 dependencies {
@@ -45,4 +52,11 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     // Offline wake-word gate + command ASR (no cloud, no popup)
     implementation("com.alphacephei:vosk-android:0.3.75")
+    // Streaming command ASR: Zipformer 20M int8 (sherpa-onnx, ARM64).
+    // The JitPack aggregator POM also pulls the desktop JVM jar â€” exclude it
+    // (its classes duplicate the AAR and break dexing).
+    implementation("com.github.k2-fsa:sherpa-onnx:1.13.8") {
+        exclude(group = "com.github.k2-fsa", module = "sherpa-onnx-jvm")
+        exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-jvm")
+    }
 }
