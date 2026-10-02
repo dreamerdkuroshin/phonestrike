@@ -11,8 +11,8 @@ android {
         applicationId = "com.heystrike.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 14
-        versionName = "2.4"
+        versionCode = 15
+        versionName = "2.5"
         // F23 is arm64; strip other ABIs from the 44MB multi-arch sherpa AAR
         ndk { abiFilters += setOf("arm64-v8a") }
     }
@@ -60,4 +60,10 @@ dependencies {
         exclude(group = "com.github.k2-fsa", module = "sherpa-onnx-jvm")
         exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-jvm")
     }
+    // Vision capture (spec 11): CameraX preview + one-shot stills, camera2 backend
+    val cameraX = "1.3.4"
+    implementation("androidx.camera:camera-core:$cameraX")
+    implementation("androidx.camera:camera-camera2:$cameraX")
+    implementation("androidx.camera:camera-lifecycle:$cameraX")
+    implementation("androidx.camera:camera-view:$cameraX")
 }
