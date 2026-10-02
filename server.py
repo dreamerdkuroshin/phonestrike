@@ -17,7 +17,9 @@ CORS(app)
 
 # --- Configuration ---
 CONFIG_PATH = os.path.expanduser("~/PocketStrike-AI/config.json")
-OMNIROUTE_KEY = "***PURGED-ROTATED***"
+# ponytail: key was hardcoded here (leaked into git history — rotate it);
+# now env-only. get_api_key() still prefers config.json, local llama needs none.
+OMNIROUTE_KEY = os.environ.get("OMNIROUTE_KEY", "")
 OMNIROUTE_URL = "http://localhost:20128/v1"
 
 # --- Default Config ---
@@ -741,6 +743,7 @@ def api_voice_stream():
     def gen():
         import json as _js
         import requests as _rq
+        r = None
         try:
             text = text_in
             if not text:
@@ -783,6 +786,14 @@ def api_voice_stream():
             import json as _js2
             yield 'data: ' + _js2.dumps({"token": f"Stream error: {e}"}) + '\n\n'
             yield 'data: [DONE]\n\n'
+        finally:
+            # client disconnect (GeneratorExit) -> release the upstream LLM
+            # connection instead of letting it stream to nobody
+            if r is not None:
+                try:
+                    r.close()
+                except Exception:
+                    pass
     return Response(gen(), mimetype='text/event-stream')
 
 @app.route('/api/search', methods=['GET'])
@@ -907,7 +918,13 @@ def api_crashlog():
 
 @app.route('/config', methods=['GET'])
 def get_config():
-    return jsonify(config)
+    # spec: never serve the raw key — setup.py only needs to know it's set
+    safe = json.loads(json.dumps(config))
+    if safe.get("api_key"):
+        safe["api_key"] = "***"
+    if isinstance(safe.get("openai"), dict) and safe["openai"].get("api_key"):
+        safe["openai"]["api_key"] = "***"
+    return jsonify(safe)
 
 @app.route('/config', methods=['POST'])
 def update_config():
