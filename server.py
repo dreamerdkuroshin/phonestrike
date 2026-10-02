@@ -641,16 +641,20 @@ def api_chat():
                 break
         if not last_user:
             return "Empty message", 400
+        # raw LLM access for the on-device agent planner: its prompt embeds a
+        # screen dump, so instant-intent matching must not hijack it (a screen
+        # showing "Battery" used to return battery status instead of a plan)
+        raw = bool(data.get("raw"))
         # mobile first
-        mob = handle_mobile_command(last_user)
+        mob = None if raw else handle_mobile_command(last_user)
         if mob is not None and not last_user.lower().startswith(("run ", "switch to ", "list ", "launch ", "start rehan", "stop ", "status", "check ", "help")):
             if not mob.startswith("❓"):
                 if config.get("voice_enabled"):
                     try: mobile_tts_say(mob)
                     except Exception: pass
                 return Response(mob, mimetype='text/plain')
-        # jarvis commands
-        if last_user.lower().startswith(("run ", "switch to ", "list ", "launch ", "start ", "stop ", "status", "check ", "help", "?", "draw ", "generate image", "current model", "omniroute ", "restart strike", "open ", "call ", "battery", "torch", "flashlight", "volume", "search ", "google ", "navigate ")):
+        # jarvis commands (skipped for raw agent prompts — same hijack reason)
+        if not raw and last_user.lower().startswith(("run ", "switch to ", "list ", "launch ", "start ", "stop ", "status", "check ", "help", "?", "draw ", "generate image", "current model", "omniroute ", "restart strike", "open ", "call ", "battery", "torch", "flashlight", "volume", "search ", "google ", "navigate ")):
             resp_text = jarvis_commander(last_user)
             if config.get("voice_enabled") and len(resp_text) < 300:
                 try: mobile_tts_say(resp_text)
@@ -901,27 +905,6 @@ def api_vision():
         return jsonify({"answer": ans})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-@app.route('/api/mobile/battery', methods=['GET'])
-def api_mobile_battery():
-    return jsonify({"info": mobile_battery()})
-
-@app.route('/api/mobile/speak', methods=['POST'])
-def api_mobile_speak():
-    data = request.json or {}
-    mobile_tts_say(str(data.get('text', ''))[:500])
-    return jsonify({"status": "spoken"})
-
-@app.route('/api/mobile/notify', methods=['POST'])
-def api_mobile_notify():
-    data = request.json or {}
-    mobile_notify(str(data.get('title', 'Hey Strike')), str(data.get('message', '')))
-    return jsonify({"status": "notified"})
-
-@app.route('/api/mobile/open', methods=['POST'])
-def api_mobile_open():
-    data = request.json or {}
-    return jsonify({"response": mobile_open_app(str(data.get('app', '')))})
 
 @app.route('/api/crashlog', methods=['POST'])
 def api_crashlog():
