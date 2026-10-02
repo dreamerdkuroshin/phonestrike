@@ -100,9 +100,27 @@ class MainActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.chipYouTube).setOnClickListener { send("open youtube") }
         findViewById<TextView>(R.id.chipSettings).setOnClickListener { send("open settings") }
         findViewById<Button>(R.id.stopBtn).setOnClickListener {
+            // emergency stop (spec 58): agent + TTS + pending confirm, all layers
             StrikeAgent.stopRequested = true
+            PendingConfirm.clear(this)
+            OverlayService.inst?.interruptAnswer()
+            StrikeVoiceController.notifyIdle()
             ConversationManager.clearTask(this)
             taskCard.visibility = View.GONE
+        }
+        findViewById<Button>(R.id.confirmYesBtn).setOnClickListener {
+            Thread {
+                val ans = PendingConfirm.execute(this)
+                ConversationManager.recordAnswer(this, ans)
+                runOnUiThread { reloadTurns(); refreshTaskCard() }
+            }.start()
+        }
+        findViewById<Button>(R.id.confirmNoBtn).setOnClickListener {
+            Thread {
+                val ans = PendingConfirm.cancel(this)
+                ConversationManager.recordAnswer(this, ans)
+                runOnUiThread { reloadTurns(); refreshTaskCard() }
+            }.start()
         }
 
         renderState(StrikeVoiceController.state)
@@ -168,6 +186,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshTaskCard() {
+        val pc = PendingConfirm.active()
+        if (pc != null) {
+            taskCard.visibility = View.VISIBLE
+            findViewById<View>(R.id.confirmRow).visibility = View.VISIBLE
+            taskTitle.text = "Confirmation needed"
+            taskStep.text = "Ready to tap \u201C${pc.arg}\u201D?"
+            return
+        }
+        findViewById<View>(R.id.confirmRow).visibility = View.GONE
         val task = ConversationManager.activeTask(this)
         val step = ConversationManager.lastToolResult(this)
         if (task.isBlank() && step.isBlank()) {

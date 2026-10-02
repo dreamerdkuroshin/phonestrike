@@ -27,9 +27,22 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         "settings" to "com.android.settings", "photos" to "com.google.android.apps.photos"
     )
 
-    fun handle(text: String): String {
-        ConversationManager.recordUser(ctx, text)
+    fun handle(text: String, record: Boolean = true): String {
+        // correction re-routes ("actually telegram") re-enter the pipeline clean
+        Correction.strip(text)?.let { fixed ->
+            if (record) ConversationManager.recordUser(ctx, text)
+            return handle(fixed, record = false)
+        }
+        if (record) ConversationManager.recordUser(ctx, text)
         val t = text.lowercase().trim()
+        // HITL confirmation release ("yes"/"no") — before every other route
+        PendingConfirm.consume(t, ctx)?.let { return it }
+        // runtime emergency stop (spec 58): never depends on the LLM obeying
+        if (t in stopWords) {
+            StrikeAgent.stopRequested = true
+            PendingConfirm.clear(ctx)
+            return "Stopped."
+        }
         // pending ambiguity follow-up: answer with just the app name
         AppResolver.pick(ctx, t)?.let { pkg ->
             val name = CommandNormalizer.normalizeName(t)
@@ -47,6 +60,10 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         contactIntent(t)?.let { (verb, name) ->
             contactRoute(text, verb, name)?.let { return it }
         }
+        // spec 11/12: camera + screen-vision cues, BEFORE the planner so
+        // "take a screenshot and read it" isn't hijacked by " and " routing
+        if (isCameraCue(t)) return Vision.askCamera(ctx, text)
+        if (isScreenVisionCue(t)) return Vision.askScreen(ctx, text)
         // P4: multi-step / contact tasks go to the planner (observe→act→verify),
         // not the direct parser. e.g. "open whatsapp and call rahul".
         if (t.startsWith("call ") || " and " in t || t.startsWith("tap ")) {
@@ -95,6 +112,12 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
 
     companion object {
         private val contactVerbs = listOf("message", "text", "call", "whatsapp")
+
+        /** Emergency-stop utterances (spec 58) — handled at runtime, not by the LLM. */
+        private val stopWords = setOf(
+            "stop", "stop it", "stop that", "stop this", "cancel", "cancel that",
+            "cancel this", "never mind", "nevermind", "abort", "forget it"
+        )
 
         // pending contact ambiguity: (original command, extracted name)
         @Volatile
@@ -158,9 +181,34 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
      * Streaming twin of handle(): local intents arrive as one instant token,
      * AI answers arrive token-by-token like ChatGPT.
      */
-    fun handleStream(text: String, onToken: (String) -> Unit, onDone: () -> Unit) {
-        ConversationManager.recordUser(ctx, text)
+    fun handleStream(
+        text: String,
+        onToken: (String) -> Unit,
+        onDone: () -> Unit,
+        record: Boolean = true
+    ) {
+        // correction re-routes ("actually telegram") re-enter the pipeline clean
+        Correction.strip(text)?.let { fixed ->
+            if (record) ConversationManager.recordUser(ctx, text)
+            handleStream(fixed, onToken, onDone, record = false)
+            return
+        }
+        if (record) ConversationManager.recordUser(ctx, text)
         val t = text.lowercase().trim()
+        // HITL confirmation release ("yes"/"no") — before every other route
+        PendingConfirm.consume(t, ctx)?.let { ans ->
+            onToken(ans)
+            onDone()
+            return
+        }
+        // runtime emergency stop (spec 58): never depends on the LLM obeying
+        if (t in stopWords) {
+            StrikeAgent.stopRequested = true
+            PendingConfirm.clear(ctx)
+            onToken("Stopped.")
+            onDone()
+            return
+        }
         // pending ambiguity follow-up: answer with just the app name
         AppResolver.pick(ctx, t)?.let { pkg ->
             val name = CommandNormalizer.normalizeName(t)
@@ -183,6 +231,18 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
                 onDone()
                 return
             }
+        }
+        // spec 11/12: camera + screen-vision cues, BEFORE the planner so
+        // "take a screenshot and read it" isn't hijacked by " and " routing
+        if (isCameraCue(t)) {
+            onToken(Vision.askCamera(ctx, text))
+            onDone()
+            return
+        }
+        if (isScreenVisionCue(t)) {
+            onToken(Vision.askScreen(ctx, text))
+            onDone()
+            return
         }
         // multi-step / contact tasks -> local agent planner (observe->act->verify)
         if (t.startsWith("call ") || " and " in t) {
@@ -309,7 +369,8 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         } catch (e: Exception) {
             "Planner failed: ${e.message}"
         } finally {
-            ConversationManager.clearTask(ctx) // done or failed — card/Stop reset
+            // a pending confirmation keeps the card alive until yes/no resolves it
+            if (PendingConfirm.active() == null) ConversationManager.clearTask(ctx)
         }
     }
 
@@ -321,6 +382,26 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         "what am i (looking at|seeing)|describe (the |my )?screen|" +
         "what('s| is) (this|on this) (app|page|screen)"
     )
+
+    /** Spec 11: physical-object cues — short and exact so chat questions don't hijack the camera. */
+    private fun isCameraCue(t: String): Boolean {
+        val w = t.trim().trim('?', '!', '.')
+        if (w.split(" ").size > 5) return false
+        if (screenQuery.containsMatchIn(w)) return false // screen questions use the a11y tree
+        return w.startsWith("look at this") || w.startsWith("look at that") ||
+            w == "what is this" || w == "what's this" ||
+            w == "what is that" || w == "what's that" ||
+            w.startsWith("what am i holding") || w.startsWith("what am i pointing")
+    }
+
+    /** Spec 12: explicit screen-vision cues (screenshot / on-screen error text). */
+    private val screenVisionCue = Regex(
+        "take a (fast )?(screenshot|screen shot)|screenshot (this|it|my screen|the screen|for me)|" +
+        "why is this error|what does (this|the) error say"
+    )
+
+    private fun isScreenVisionCue(t: String): Boolean =
+        screenVisionCue.containsMatchIn(t.trim().trim('?', '!', '.'))
 
     /** Live-fact cues: fetch fresh web snippets so the local LLM doesn't hallucinate recency. */
     private val searchCue = Regex(
@@ -344,8 +425,12 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
                 for (i in 0 until minOf(5, arr.length())) {
                     val o = arr.getJSONObject(i)
                     append("- ").append(o.optString("title")).append(": ")
-                    append(o.optString("snippet")).append('\n')
+                    append(o.optString("snippet"))
+                    val u = o.optString("url")
+                    if (u.isNotEmpty()) append(" (source: ").append(u).append(")")
+                    append('\n')
                 }
+                append("Cite the source URL when you use a result above.\n")
             }
         } catch (_: Exception) { null }
     }
@@ -403,7 +488,9 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
     }
 
     fun speak(s: String) {
-        val clean = s.replace(Regex("[\\uD83C-\\uDBFF\\uDC00-\\uDFFF☀-➿➕➖]"), "").trim().take(450)
+        // URLs are for the screen, never the ear (spec 5)
+        val clean = s.replace(Regex("https?://\\S+"), " ")
+            .replace(Regex("[\\uD83C-\\uDBFF\\uDC00-\\uDFFF☀-➿➕➖]"), "").trim().take(450)
         tts?.speak(clean.ifBlank { "Done." }, TextToSpeech.QUEUE_FLUSH, null, "strike")
     }
 }
