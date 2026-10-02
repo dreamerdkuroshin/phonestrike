@@ -362,7 +362,10 @@ async function loadConversations() {
 }
 
 // Save conversations to LocalStorage and sync to server
+// _rev guards the 8s poll: a tab never adopts server state newer than
+// its own unsynced edits (last-writer-wins converges instead of clobbering)
 async function saveConversations() {
+    conversations.forEach(c => { c._rev = (c._rev || 0) + 1; });
     localStorage.setItem('pocketstrike_conversations', JSON.stringify(conversations));
     localStorage.setItem('pocketstrike_active_id', activeConversationId);
     
@@ -548,11 +551,20 @@ async function handleSend() {
         }
     } finally {
         activeAbortController = null;
+        // Stop/barge-in owns the partial turn: never speak it, mark it
+        const wasStopped = stopRequested;
+        stopRequested = false;
         isGenerating = false;
         toggleSendButton();
         saveConversations();
         renderAll();
         scrollToBottom();
+        if (wasStopped) {
+            const m = activeChat.messages[activeChat.messages.length - 1];
+            if (m && m.role === 'assistant') m.content += "\n⏹ stopped";
+            renderAll();
+            return;
+        }
         if (typeof voiceState !== 'undefined' && voiceState !== 'off') {
             const lastAssistantMsg = activeChat.messages.filter(m => m.role === 'assistant').pop();
             const textToSpeak = (lastAssistantMsg && lastAssistantMsg.content) ? lastAssistantMsg.content : streamedText;
@@ -569,6 +581,8 @@ function handleStop() {
         activeAbortController.abort();
         activeAbortController = null;
     }
+    stopRequested = true;
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     isGenerating = false;
     toggleSendButton();
     removeTypingIndicator();
@@ -1120,15 +1134,21 @@ async function pollHistoryChanges() {
             const serverConversations = await response.json();
             if (serverConversations && serverConversations.length > 0) {
                 const serverMessages = serverConversations[0].messages;
-                
+
                 // Set initial length on first poll
                 if (lastHistoryLength === 0) {
                     lastHistoryLength = serverMessages.length;
                     return;
                 }
-                
-                // If history grew, update local memory and re-render
-                if (serverMessages.length !== lastHistoryLength) {
+
+                // Adopt server state only when it is NEWER than local edits —
+                // otherwise this tab's unsynced changes would be clobbered
+                const localActive = conversations.find(c => c.id === activeConversationId);
+                const serverActive = serverConversations.find(c => c.id === activeConversationId)
+                    || serverConversations[0];
+                const serverNewer = serverActive && localActive &&
+                    (serverActive._rev || 0) > (localActive._rev || 0);
+                if (serverNewer) {
                     lastHistoryLength = serverMessages.length;
                     conversations = serverConversations;
                     
@@ -1282,6 +1302,10 @@ let speechRecognitionObj = null;
 let speechSilenceTimer = null;
 let audioCtx = null;
 let isVoiceSending = false;
+// stop/barge-in: suppress the send-finally's speak + mark the partial turn
+let stopRequested = false;
+// stable-submit: the exact transcript the pending timer was armed for
+let scheduledText = '';
 
 // Audio Earcons (Web Audio API Synthesizer - Zero Downloads)
 function getAudioContext() {
@@ -1477,8 +1501,6 @@ function initVoiceAssistant() {
     if (voiceHudClose) voiceHudClose.addEventListener('click', () => stopVoiceListening());
 
     speechRecognitionObj.onresult = (event) => {
-        if (isVoiceSending || voiceState === 'speaking' || voiceState === 'greeting' || voiceState === 'off' || voiceState === 'thinking') return;
-
         let transcript = '';
         let isFinal = false;
 
@@ -1489,6 +1511,23 @@ function initVoiceAssistant() {
 
         const rawText = transcript.trim();
         if (!rawText) return;
+        if (isVoiceSending || voiceState === 'off' || voiceState === 'thinking') return;
+
+        // barge-in: user talks over Strike's answer — kill TTS + fetch but
+        // keep the mic flowing (no recognition abort: the rest of this
+        // utterance still arrives as events and submits normally)
+        if (voiceState === 'speaking' || voiceState === 'greeting') {
+            const said = rawText.toLowerCase().replace(/\b(hello strike|hey strike|ok strike|hi strike)\b/gi, '').trim();
+            if (said.length <= 2) return;
+            if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+            if (activeAbortController) { activeAbortController.abort(); activeAbortController = null; }
+            stopRequested = true;
+            isGenerating = false;
+            isVoiceSending = false;
+            voiceState = 'activated';
+            setVoiceHudState('listening', 'Interrupted — I am listening...');
+        }
+
         const lowerText = rawText.toLowerCase();
 
         const wakeWords = ["hello strike", "hey strike", "ok strike", "hi strike"];
@@ -1520,6 +1559,9 @@ function initVoiceAssistant() {
 
                 if (speechSilenceTimer) clearTimeout(speechSilenceTimer);
 
+                // stability: only this exact transcript may fire the timer —
+                // if speech is still arriving the value moves and we re-arm
+                scheduledText = cleanPrompt;
                 const silenceDelay = isFinal ? 400 : 900;
                 speechSilenceTimer = setTimeout(() => {
                     submitVoicePrompt();
@@ -1549,6 +1591,13 @@ function initVoiceAssistant() {
 
 function submitVoicePrompt() {
     const promptToSend = chatInput.value.trim();
+    // transcript still moving (more speech arrived after arming) — re-arm
+    if (promptToSend !== scheduledText) {
+        scheduledText = promptToSend;
+        if (speechSilenceTimer) clearTimeout(speechSilenceTimer);
+        speechSilenceTimer = setTimeout(submitVoicePrompt, 900);
+        return;
+    }
     if (promptToSend.length > 0 && !isGenerating && !isVoiceSending && voiceState === 'activated') {
         isVoiceSending = true;
         console.log("🎙️ Strike Voice Engine - Submitting:", promptToSend);

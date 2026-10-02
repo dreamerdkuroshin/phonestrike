@@ -37,7 +37,7 @@ License: MIT
 | 7 | Web voice UI | ✅ WORKING | Full `index.html` restored: mic buttons, Siri HUD overlay, TTS read-back |
 | 8 | Tap-to-speak (shade button) | ✅ WORKING | `hey-strike-tap.sh` posts ongoing button; `hey-strike-once.sh --text` tested, no mic loop |
 | 9 | Termux TTS / STT | ✅ WORKING | `termux-tts-speak` exit 0 (Samsung + Google engines); `termux-speech-to-text` returned live speech |
-| 10 | HeyStrike APK | 🟡 SCAFFOLDED, NOT compiled | Full source in `HeyStrike/` + CI workflow; no JDK/SDK on phone so build via GitHub Actions |
+| 10 | HeyStrike APK | ✅ WORKING (v2.5.6+) | Compiled + installed on-device; voice gate, orb, Tasks/Device screens live. Wake-word deafness under diagnosis — see STRIKE_STATUS.md |
 | 11 | True always-on hotword (Siri-like, screen-off, no popup) | ❌ NOT POSSIBLE in Termux | Android reserves background mic + lockscreen hotword for system assistant; see explanation below |
 
 > Battery was 15% during checks — keep phone charging; Llama + servers stop if the phone dies.
