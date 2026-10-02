@@ -725,9 +725,13 @@ def api_voice_command():
         if not text:
             return jsonify({"response": "I didn't hear anything."})
         import re as _re
-        # chained tasks: "open whatsapp and then tell me the time" -> run each, join
-        parts = _re.split(r'\s+(?:and then|and now|then|and after that|phir)\s+', text, flags=_re.IGNORECASE)
+        # chained tasks: "open whatsapp and message beru" -> run each, join.
+        # plain "and"/"aur" also splits, but only when the first step is an
+        # action — "cats and dogs" stays one LLM call.
+        parts = _re.split(r'\s+(?:and then|and now|then|and after that|phir|and|aur)\s+', text, flags=_re.IGNORECASE)
         parts = [p for p in (x.strip() for x in parts) if p]
+        if len(parts) > 1 and not parts[0].lower().startswith(("open ", "launch ", "start ", "call ", "message ", "text ", "tap ", "go ", "turn ", "switch ", "run ")):
+            parts = [text]
         if len(parts) > 1:
             outs = []
             for p in parts[:5]:
