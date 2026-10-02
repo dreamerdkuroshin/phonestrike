@@ -11,8 +11,8 @@ android {
         applicationId = "com.heystrike.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 13
-        versionName = "2.3"
+        versionCode = 14
+        versionName = "2.4"
         // F23 is arm64; strip other ABIs from the 44MB multi-arch sherpa AAR
         ndk { abiFilters += setOf("arm64-v8a") }
     }
@@ -48,6 +48,7 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
+    testImplementation("junit:junit:4.13.2")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
     // Offline wake-word gate + command ASR (no cloud, no popup)
