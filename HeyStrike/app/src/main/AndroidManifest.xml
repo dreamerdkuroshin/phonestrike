@@ -14,6 +14,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Talk to local PocketStrike server -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Device screen reads Wi-Fi/mobile state (normal permission) -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Find + open installed apps (WhatsApp etc.) -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <!-- Resolve contacts ("message Beru") — lookup only, nothing is sent -->
@@ -59,6 +61,14 @@
 
         <activity
             android:name=".SettingsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".TasksActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".DeviceActivity"
             android:exported="false" />
 
         <!-- Vision capture (spec 11/12): launched by StrikeApi on a voice cue -->

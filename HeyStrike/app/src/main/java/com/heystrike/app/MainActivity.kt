@@ -18,6 +18,7 @@ import android.widget.ImageButton
 import android.widget.ListView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.bottomnavigation.BottomNavigationView
 import java.util.Calendar
 
 /**
@@ -129,6 +130,7 @@ class MainActivity : AppCompatActivity() {
         refreshTaskCard()
         refreshConnectionDot()
         requestMissingPermissions()
+        Nav.wire(this, findViewById<BottomNavigationView>(R.id.bottomNav), R.id.nav_home)
     }
 
     // First run: mic permission was previously only requestable from
