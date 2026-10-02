@@ -52,7 +52,12 @@ object ConversationManager {
 
     fun activeTask(c: Context): String = prefs(c).getString("task", "") ?: ""
 
-    fun lastToolResult(c: Context): String = prefs(c).getString("tool", "") ?: ""
+    fun lastToolResult(c: Context): String =
+        (prefs(c).getString("tool", "") ?: "").lines().lastOrNull { it.isNotBlank() } ?: ""
+
+    /** All recorded steps this task, oldest first — the Tasks screen reads this. */
+    fun toolSteps(c: Context): List<String> =
+        (prefs(c).getString("tool", "") ?: "").lines().filter { it.isNotBlank() }
 
     /** Recent turns for the home chat list: (who, text), oldest first. */
     fun turns(c: Context): List<Pair<String, String>> =
@@ -97,7 +102,10 @@ object ConversationManager {
     }
 
     fun recordToolResult(c: Context, text: String) {
-        prefs(c).edit().putString("tool", text.take(TURN_CHARS)).apply()
+        // append, not overwrite: the Tasks screen shows the real step list
+        val steps = ((prefs(c).getString("tool", "") ?: "").lines()
+            .filter { it.isNotBlank() } + text.take(TURN_CHARS)).takeLast(8)
+        prefs(c).edit().putString("tool", steps.joinToString("\n")).apply()
         onChange?.invoke()
     }
 

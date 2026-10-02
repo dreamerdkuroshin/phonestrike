@@ -66,7 +66,7 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         if (isScreenVisionCue(t)) return Vision.askScreen(ctx, text)
         // P4: multi-step / contact tasks go to the planner (observe→act→verify),
         // not the direct parser. e.g. "open whatsapp and call rahul".
-        if (t.startsWith("call ") || " and " in t || t.startsWith("tap ")) {
+        if (t.startsWith("call ") || " and " in t || " then " in t || t.startsWith("tap ")) {
             return runPlanner(text)
         }
         // Phone-UI layer (Accessibility): tap by visible text, back/home
@@ -249,7 +249,7 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
             return
         }
         // multi-step / contact tasks -> local agent planner (observe->act->verify)
-        if (t.startsWith("call ") || " and " in t) {
+        if (t.startsWith("call ") || " and " in t || " then " in t) {
             onToken(runPlanner(text))
             onDone()
             return
