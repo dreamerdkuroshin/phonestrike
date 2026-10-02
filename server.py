@@ -926,6 +926,43 @@ def api_crashlog():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/health', methods=['GET'])
+def api_health():
+    """Real component checks. Device-side pieces (asr/tts/mic/shizuku) run in
+    the Android app, not here — reported as n/a-device, never fake-ok."""
+    import urllib.request as _u
+    def http_ok(url, headers=None, timeout=4):
+        try:
+            req = _u.Request(url, headers=headers or {})
+            with _u.urlopen(req, timeout=timeout) as r:
+                return 200 <= r.status < 300
+        except Exception:
+            return False
+    llm_headers = {}
+    try:
+        if get_api_key():
+            llm_headers = {"Authorization": "Bearer " + get_api_key()}
+    except Exception:
+        pass
+    llm_ok = http_ok(get_base_url().rstrip("/") + "/models", llm_headers)
+    try:
+        up = os.path.join(WORKSPACE_DIR, "uploads")
+        os.makedirs(up, exist_ok=True)
+        uploads_ok = os.access(up, os.W_OK)
+    except Exception:
+        uploads_ok = False
+    return jsonify({
+        "backend": "ok",
+        "llm": "ok" if llm_ok else "down",
+        "config": "ok" if (get_base_url() and get_model()) else "bad",
+        "uploads": "ok" if uploads_ok else "unwritable",
+        "asr": "n/a-device",
+        "tts": "n/a-device",
+        "mic": "n/a-device",
+        "shizuku": "n/a-device",
+        "memory": "ok",
+    })
+
 @app.route('/config', methods=['GET'])
 def get_config():
     # spec: never serve the raw key — setup.py only needs to know it's set

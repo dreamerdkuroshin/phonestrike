@@ -2,3 +2,5 @@
 build/
 *.apk
 *.log
+
+__pycache__/
