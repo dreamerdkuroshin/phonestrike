@@ -202,7 +202,15 @@ Screen now:
             for ((name, arg) in bare) {
                 if (stopRequested) return "Stopped."
                 if (name.equals("done", true)) return arg.ifBlank { plain }.take(500)
-                val res = tool(name, arg.trim('\'', '"', ' '))
+                val cleanArg = arg.trim('\'', '"', ' ')
+                // spec 16/32: HITL barrier — never tap send/delete/pay unconfirmed
+                val level = AgentPermissions.levelFor(name, cleanArg)
+                if (level != AgentPermissions.Level.SAFE) {
+                    val pc = PendingConfirm.set(name, cleanArg, level)
+                    log.append("confirm required: $name($cleanArg)\n")
+                    return PendingConfirm.question(pc)
+                }
+                val res = tool(name, cleanArg)
                 log.append("$name($arg) -> $res\n")
                 ConversationManager.recordToolResult(ctx, "$name($arg) -> $res")
             }

@@ -198,7 +198,9 @@ class OverlayService : Service() {
 
     private fun speakChunk(s: String) {
         if (s.isBlank()) return
-        val clean = s.replace(Regex("[\\uD83C-\\uDBFF\\uDC00-\\uDFFF☀-➿➕➖*#>`_]"), "").trim().take(400)
+        // URLs belong on screen, never spoken (spec 5) — strip before markdown cleanup
+        val clean = s.replace(Regex("https?://\\S+"), " ")
+            .replace(Regex("[\\uD83C-\\uDBFF\\uDC00-\\uDFFF☀-➿➕➖*#>`_]"), "").trim().take(400)
         if (clean.isBlank()) return
         if (!speaking) {
             speaking = true

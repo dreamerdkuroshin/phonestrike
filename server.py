@@ -251,8 +251,24 @@ def handle_mobile_command(text):
     return None
 
 # --- Command Execution ---
+# Spec 60 — shell safety: catastrophic commands are refused outright, not
+# passed to the LLM's judgment. Workspace-scoped rm is allowed for dev flows.
+RISKY_RE = re.compile(
+    r"\brm\s+(-[a-z]+\s+)*(?:/|~|\$HOME|(?<![\w./-])\*)(?:\s|$)"
+    r"|\bmkfs(?:\.\w+)?\b"
+    r"|\bdd\s+[^|;&]*\bof=/dev/"
+    r"|:\(\)\s*\{"
+    r"|\bchmod\s+-R\s+777\s+(?:/|~)"
+    r"|>\s*/dev/sd",
+    re.I,
+)
+SAFE_WORKSPACE = re.compile(r"PocketStrike-AI|my-automator|/tmp/", re.I)
+
 def run_shell_command(command, timeout=60):
     """Execute a shell command and return output."""
+    if RISKY_RE.search(command) and not SAFE_WORKSPACE.search(command):
+        return ("BLOCKED high-risk command (shell safety): " + command[:120] +
+                ". Not running it — if you really mean it, run it manually in Termux.")
     try:
         result = subprocess.run(
             command,
@@ -778,19 +794,75 @@ def api_search():
     try:
         import requests as _rq
         from html import unescape as _unes
+        from urllib.parse import unquote as _unq, urlparse as _urlp, parse_qs as _pq
         r = _rq.post("https://html.duckduckgo.com/html/", data={"q": q},
                      headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)"}, timeout=8)
         titles = re.findall(r'class="result__a"[^>]*>(.*?)</a>', r.text, re.S)
+        hrefs = re.findall(r'class="result__a"[^>]*href="([^"]+)"', r.text)
         snips = re.findall(r'class="result__snippet"[^>]*>(.*?)</(?:a|div)>', r.text, re.S)
         out = []
         for i in range(min(5, len(titles))):
             t = re.sub(r'<[^>]+>', '', titles[i]).strip()
             s = re.sub(r'<[^>]+>', '', snips[i]).strip() if i < len(snips) else ""
             if t:
-                out.append({"title": _unes(t), "snippet": _unes(s)})
+                # DDG hides the real link in ?uddg= redirect — extract for citations
+                u = ""
+                if i < len(hrefs):
+                    href = hrefs[i]
+                    if href.startswith("//"):
+                        href = "https:" + href
+                    if "uddg=" in href:
+                        try:
+                            u = _unq(_pq(_urlp(href).query).get("uddg", [""])[0])
+                        except Exception:
+                            u = ""
+                    elif href.startswith("http"):
+                        u = href
+                out.append({"title": _unes(t), "snippet": _unes(s), "url": u})
         return jsonify({"q": q, "results": out})
     except Exception as e:
         return jsonify({"q": q, "results": [], "error": str(e)})
+
+@app.route('/api/vision', methods=['POST'])
+def api_vision():
+    """Spec 11/12 — {image: base64 jpeg, question} -> {answer}.
+    Vision model comes from config.json "vision_model" (e.g. a llava-class
+    model on the same OpenAI-compatible backend). Honest error if unset."""
+    try:
+        data = request.json or {}
+        img = str(data.get('image', ''))[:6_000_000]
+        q = str(data.get('question', 'Describe what you see.'))[:400]
+        if not img:
+            return jsonify({"error": "no image provided"}), 400
+        vision_model = config.get("vision_model")
+        if not vision_model and isinstance(config.get("openai"), dict):
+            vision_model = config["openai"].get("vision_model")
+        if not vision_model:
+            return jsonify({"error": "no vision model — set \"vision_model\" in "
+                                     "~/PocketStrike-AI/config.json (e.g. llava)"})
+        import requests as _rq
+        b64 = img.split(",", 1)[-1] if img.startswith("data:") else img
+        payload = {
+            "model": vision_model,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": q},
+                {"type": "image_url", "image_url": {
+                    "url": "data:image/jpeg;base64," + b64}}
+            ]}],
+            "stream": False,
+            "max_tokens": 300,
+        }
+        headers = {"Content-Type": "application/json"}
+        if get_api_key():
+            headers["Authorization"] = f"Bearer {get_api_key()}"
+        r = _rq.post(get_base_url().rstrip("/") + "/chat/completions",
+                     json=payload, headers=headers, timeout=60)
+        if r.status_code != 200:
+            return jsonify({"error": f"vision backend {r.status_code}: {r.text[:200]}"})
+        ans = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        return jsonify({"answer": ans})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/mobile/battery', methods=['GET'])
 def api_mobile_battery():
