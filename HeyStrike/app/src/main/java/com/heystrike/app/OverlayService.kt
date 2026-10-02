@@ -38,7 +38,9 @@ class OverlayService : Service() {
         inst = this
         tts = TextToSpeech(this) { st ->
             if (st == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.US
+                // Hindi/Hinglish answers speak Hindi; else US English
+                tts?.language =
+                    if (Prefs.voiceLang(this) == "hi") Locale("hi") else Locale.US
                 ttsReady = true
             }
         }
@@ -57,6 +59,7 @@ class OverlayService : Service() {
         tts?.stop()
         speaking = false
         (root as? SiriOrbView)?.setText("Interrupted — listening…")
+        (root as? SiriOrbView)?.setMode(SiriOrbView.MODE_LISTENING)
         Log.i(TAG, "overlay answer interrupted by user")
     }
 
@@ -164,6 +167,7 @@ class OverlayService : Service() {
             var guard = 0
             while (!ttsReady && tts != null && guard++ < 50) Thread.sleep(100)
             (root as? SiriOrbView)?.setText("“$text”\n\n…")
+            (root as? SiriOrbView)?.setMode(SiriOrbView.MODE_THINKING)
             val full = StringBuilder()
             val pending = StringBuilder()
             fun flushSpeech(force: Boolean) {
@@ -212,6 +216,7 @@ class OverlayService : Service() {
         if (clean.isBlank()) return
         if (!speaking) {
             speaking = true
+            (root as? SiriOrbView)?.setMode(SiriOrbView.MODE_SPEAKING)
             StrikeVoiceController.notifySpeaking()
             Log.i(TAG, "tts started")
         }
@@ -266,38 +271,79 @@ class OverlayService : Service() {
     }
 }
 
-/** Glowing orb + text drawn with plain Android views (no deps). */
+/** Glowing orb + text drawn with plain Android views (no deps).
+ *  Transparent backdrop (no black veil), dp-scaled core + halo, looping
+ *  pulse, real state tints — listening blue, thinking purple, speaking orange. */
 class SiriOrbView(c: Context, onTap: () -> Unit) : FrameLayout(c) {
+    companion object {
+        const val MODE_LISTENING = 0
+        const val MODE_THINKING = 1
+        const val MODE_SPEAKING = 2
+    }
+
     private val label = android.widget.TextView(c).apply {
         setTextColor(0xFFFFFFFF.toInt())
         textSize = 18f
         gravity = android.view.Gravity.CENTER
         text = "Listening…\n(tap to close)"
-        setPadding(48, 48, 48, 48)
+        setPadding(48, 24, 48, 48)
+        // legibility without the old black veil: soft text shadow
+        setShadowLayer(8f, 0f, 2f, 0xCC000000.toInt())
     }
-    private val orb = View(c).apply {
-        background = android.graphics.drawable.GradientDrawable().apply {
-            shape = android.graphics.drawable.GradientDrawable.OVAL
-            colors = intArrayOf(0xFF7C3AED.toInt(), 0xFFEC4899.toInt(), 0xFF3B82F6.toInt())
-            gradientType = android.graphics.drawable.GradientDrawable.RADIAL_GRADIENT
-            gradientRadius = 320f
-        }
-        alpha = 0.95f
-    }
+    private val glow = View(c).apply { alpha = 0.30f }
+    private val orb = View(c).apply { alpha = 0.98f }
 
     init {
-        setBackgroundColor(0xCC000000.toInt())
-        val orbParams = LayoutParams(340, 340, Gravity.CENTER)
-        addView(orb, orbParams)
+        // ponytail: transparent, not the old 0xCC000000 full-screen black
+        setBackgroundColor(0x00000000)
+        val d = resources.displayMetrics.density
+        val glowPx = (250 * d).toInt()
+        val orbPx = (170 * d).toInt()
+        addView(glow, LayoutParams(glowPx, glowPx, Gravity.CENTER))
+        addView(orb, LayoutParams(orbPx, orbPx, Gravity.CENTER))
         val lp = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER)
-        lp.topMargin = 420
+        lp.topMargin = (orbPx / 2 + (28 * d)).toInt()
         addView(label, lp)
         setOnClickListener { onTap() }
-        // gentle pulse
-        orb.animate().scaleX(1.12f).scaleY(1.12f).setDuration(700)
-            .withEndAction { orb.animate().scaleX(1f).scaleY(1f).setDuration(700).start() }
-            .start()
+        applyMode(MODE_LISTENING)
+        // looping breathe (the old pulse ran once and stopped)
+        val sx = android.animation.ObjectAnimator.ofFloat(orb, "scaleX", 1f, 1.1f).apply {
+            duration = 900
+            repeatCount = android.animation.ValueAnimator.INFINITE
+            repeatMode = android.animation.ValueAnimator.REVERSE
+        }
+        val sy = android.animation.ObjectAnimator.ofFloat(orb, "scaleY", 1f, 1.1f).apply {
+            duration = 900
+            repeatCount = android.animation.ValueAnimator.INFINITE
+            repeatMode = android.animation.ValueAnimator.REVERSE
+        }
+        sx.start()
+        sy.start()
     }
 
     fun setText(s: String) { post { label.text = s } }
+
+    fun setMode(mode: Int) { post { applyMode(mode) } }
+
+    private fun applyMode(mode: Int) {
+        // radial: light center -> brand -> deep edge; halo = brand
+        val core = when (mode) {
+            MODE_THINKING -> intArrayOf(0xFFC4B5FD.toInt(), 0xFF7C3AED.toInt(), 0xFF5B21B6.toInt())
+            MODE_SPEAKING -> intArrayOf(0xFFFCD34D.toInt(), 0xFFF59E0B.toInt(), 0xFFB45309.toInt())
+            else -> intArrayOf(0xFF93C5FD.toInt(), 0xFF3B82F6.toInt(), 0xFF1D4ED8.toInt())
+        }
+        val d = resources.displayMetrics.density
+        orb.background = android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.OVAL
+            colors = core
+            gradientType = android.graphics.drawable.GradientDrawable.RADIAL_GRADIENT
+            gradientRadius = 85 * d
+        }
+        glow.background = android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.OVAL
+            colors = intArrayOf(core[1], 0x00000000)
+            gradientType = android.graphics.drawable.GradientDrawable.RADIAL_GRADIENT
+            gradientRadius = 125 * d
+        }
+    }
 }
