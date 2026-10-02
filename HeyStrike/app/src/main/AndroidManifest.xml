@@ -35,6 +35,7 @@
     </queries>
 
     <application
+        android:name=".StrikeApp"
         android:label="Hey Strike"
         android:theme="@style/Theme.Strike"
         android:usesCleartextTraffic="true"

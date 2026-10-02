@@ -885,6 +885,26 @@ def api_mobile_open():
     data = request.json or {}
     return jsonify({"response": mobile_open_app(str(data.get('app', '')))})
 
+@app.route('/api/crashlog', methods=['POST'])
+def api_crashlog():
+    """Uncaught Android stack traces (v2.5.1+). Termux cannot read other-uid
+    logcat, so the app POSTs crashes here into agent/crash.log for debugging."""
+    try:
+        data = request.json or {}
+        stack = str(data.get('stack', ''))[:8000]
+        if not stack.strip():
+            return jsonify({"error": "empty"}), 400
+        path = os.path.join(WORKSPACE_DIR, "agent", "crash.log")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n===== %s app=%s thread=%s =====\n%s\n" % (
+                time.strftime("%Y-%m-%d %H:%M:%S"),
+                str(data.get("app", "?"))[:40],
+                str(data.get("thread", "?"))[:40],
+                stack))
+        return jsonify({"status": "logged"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/config', methods=['GET'])
 def get_config():
     return jsonify(config)
