@@ -107,6 +107,7 @@ class StrikeAgent(private val ctx: Context) {
                 else "fail: '$arg' not on screen"
             }
             "type" -> if (svc == null) "fail: tap service off"
+            else if (arg.isBlank()) "fail: empty text — replan with the exact message to type"
             else {
                 val focus = svc.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
                     ?: findNode("search")?.also { clickNode(it); Thread.sleep(500) }
@@ -186,6 +187,7 @@ You are Strike's hands. Answer ONLY with tool lines, one per line, then stop.
 Tools: launch(app) tap(text) type(text) enter() swipeup() swipedown() back() home() wait(ms) verify(text) done(answer)
 Rules: tap exact visible text (case-insensitive); if tap target missing, observe first via verify; chain max 6 steps; final line done(short spoken answer).
 If the goal contains "and", it is a MULTI-STEP request: do EVERY clause in order before done(...) — e.g. "open whatsapp and message X" means launch, then compose the message; never stop after the first clause.
+Messaging: "message <words> to <name>" means find <name>'s chat, then type(<words>) with the EXACT words from the goal — type() with empty or paraphrased text is a failure; tap send only after verify shows the typed text.
 Screen now:
 """.trimIndent()
 

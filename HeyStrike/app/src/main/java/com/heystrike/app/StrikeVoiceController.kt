@@ -110,8 +110,15 @@ object StrikeVoiceController {
         started = true
         retries = 0
         wakeShown = false
-        modelPath = ModelManager.dir(ctx.applicationContext).absolutePath
-        sherpaPath = ModelManager.sherpaDir(ctx.applicationContext).absolutePath
+        // Hindi mode: Vosk-hi does wake (constrained grammar) + commands;
+        // the English sherpa command model would garbage-decode Hindi, so
+        // sherpaPath=null falls the command stage back to Vosk-hi.
+        val hi = Prefs.voiceLang(ctx.applicationContext) == "hi" &&
+            ModelManager.hiReady(ctx.applicationContext)
+        modelPath = (if (hi) ModelManager.hiDir(ctx.applicationContext)
+        else ModelManager.dir(ctx.applicationContext)).absolutePath
+        sherpaPath = if (hi) null
+        else ModelManager.sherpaDir(ctx.applicationContext).absolutePath
         appCtx = ctx.applicationContext
         onWakeCb = onWake
         onCommandCb = onCommand

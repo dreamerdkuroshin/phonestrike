@@ -128,6 +128,7 @@ object ConversationManager {
         val ctx = buildString {
             append("[Conversation context. ")
             append("id=${conversationId(c)}")
+            if (Prefs.voiceLang(c) == "hi") append("; user speaks Hindi/Hinglish — reply in the same language")
             topic(c).takeIf { it.isNotBlank() }?.let { append("; topic=$it") }
             lastUser(c).takeIf { it.isNotBlank() }?.let { append("; last user said=\"$it\"") }
             lastReply(c).takeIf { it.isNotBlank() }?.let { append("; your last reply=\"$it\"") }

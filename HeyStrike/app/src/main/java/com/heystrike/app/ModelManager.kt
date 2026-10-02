@@ -24,10 +24,38 @@ object ModelManager {
 
     private val downloadLock = java.util.concurrent.locks.ReentrantLock()
 
-    fun download(c: Context, onProgress: (done: Long, total: Long) -> Unit) = downloadLock.withLock {
-        val out = dir(c).apply { mkdirs() }
-        val zip = File(c.cacheDir, "vosk-model.zip")
-        val conn = (URL(URL).openConnection() as HttpURLConnection).apply {
+    // ---------- Hindi (vosk-model-small-hi-0.22, Apache 2.0) ----------
+    // Wake phrase stays "Hey Strike" (constrained grammar); commands decode
+    // in Hindi/Hinglish. No small Gujarati model exists upstream — Gujarati
+    // in Latin script goes through the English model + LLM understanding.
+    private const val HI_URL =
+        "https://alphacephei.com/vosk/models/vosk-model-small-hi-0.22.zip"
+
+    fun hiDir(c: Context): File = File(c.filesDir, "models/small-hi")
+
+    fun hiReady(c: Context): Boolean =
+        File(hiDir(c), "am/final.mdl").let { it.isFile && it.length() > 0 }
+
+    /** Model required for the given language pref. */
+    fun readyFor(c: Context, lang: String): Boolean =
+        if (lang == "hi") hiReady(c) else ready(c)
+
+    fun downloadHi(c: Context, onProgress: (done: Long, total: Long) -> Unit) =
+        downloadZip(HI_URL, hiDir(c).apply { mkdirs() }, "vosk-model-hi.zip", c, onProgress).also {
+            if (!hiReady(c)) throw RuntimeException("Model unpack verify failed")
+        }
+
+    fun download(c: Context, onProgress: (done: Long, total: Long) -> Unit) =
+        downloadZip(URL, dir(c).apply { mkdirs() }, "vosk-model.zip", c, onProgress).also {
+            if (!ready(c)) throw RuntimeException("Model unpack verify failed")
+        }
+
+    private fun downloadZip(
+        url: String, out: File, zipName: String, c: Context,
+        onProgress: (done: Long, total: Long) -> Unit
+    ) = downloadLock.withLock {
+        val zip = File(c.cacheDir, zipName)
+        val conn = (java.net.URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15000
             readTimeout = 120000
             connect()
@@ -80,7 +108,7 @@ object ModelManager {
             }
         }
         zip.delete()
-        if (!ready(c)) throw RuntimeException("Model unpack verify failed")
+        // unpack verify is the caller's job (ready vs hiReady differ)
     }
 
     // ---------- sherpa-onnx streaming command ASR ----------

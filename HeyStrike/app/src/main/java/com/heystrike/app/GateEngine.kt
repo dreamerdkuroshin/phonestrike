@@ -132,6 +132,15 @@ class GateEngine(
                 return
             }
             audio?.startRecording()
+            // software echo/noise suppression when the HAL exposes it
+            // (VOICE_RECOGNITION is usually HW-processed — create() then
+            // returns null and this is a no-op, never a second mic)
+            try {
+                android.media.audiofx.AcousticEchoCanceler.create(audio!!.audioSessionId)
+                    ?.let { if (!it.enabled) it.enabled = true }
+                android.media.audiofx.NoiseSuppressor.create(audio!!.audioSessionId)
+                    ?.let { if (!it.enabled) it.enabled = true }
+            } catch (_: Exception) {}
             onReady()
             // 4096 bytes = 128ms/frame; wake partials checked EVERY frame
             val buf = ByteArray(4096)

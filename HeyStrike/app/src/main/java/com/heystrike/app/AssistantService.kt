@@ -338,7 +338,8 @@ class AssistantSession(ctx: Context) : VoiceInteractionSession(ctx) {
     private fun ensureApi(): StrikeApi {
         if (tts == null) tts = TextToSpeech(context) { st ->
             if (st == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.US
+                tts?.language =
+                    if (Prefs.voiceLang(context) == "hi") Locale("hi") else Locale.US
                 ttsReady = true
             }
         }
