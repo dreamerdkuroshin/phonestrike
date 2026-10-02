@@ -136,6 +136,18 @@
                 <Button android:id="@+id/modelBtn" style="@style/RowBtn" android:text="Download" />
             </LinearLayout>
 
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Language" />
+                <TextView android:id="@+id/langStatus" style="@style/RowStatus" android:text="English" />
+                <Button android:id="@+id/langBtn" style="@style/RowBtn" android:text="EN / HI" />
+            </LinearLayout>
+
             <TextView
                 android:id="@+id/modelProgress"
                 android:layout_width="match_parent"

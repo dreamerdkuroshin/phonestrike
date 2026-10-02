@@ -68,22 +68,49 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<Button>(R.id.assistantBtn).setOnClickListener { requestAssistantRole() }
         findViewById<Button>(R.id.startBtn).setOnClickListener {
             Prefs.saveServer(this, serverBox.text.toString().trim())
+            // Start must never silently no-op: mic and the language's model
+            // are preconditions, so handle them HERE with guidance.
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.READ_CONTACTS),
+                    100
+                )
+                Toast.makeText(this, "Grant Microphone, then tap Start again", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            if (!ModelManager.readyFor(this, Prefs.voiceLang(this))) {
+                Toast.makeText(this, "Downloading voice model first…", Toast.LENGTH_SHORT).show()
+                downloadModels()
+                return@setOnClickListener
+            }
+            // stop-then-start: applies a language/model change to a live gate
+            // (stop is refused when the assistant service owns it — safe)
+            try { stopService(Intent(this, VoiceService::class.java)) } catch (_: Exception) {}
             if (isAssistantHeld()) {
                 // restart the mic service: it re-attempts the gate (revives a
                 // dead session, or starts one if assistant boot failed)
-                try {
-                    val s = Intent(this, VoiceService::class.java)
-                    if (Build.VERSION.SDK_INT >= 26) startForegroundService(s) else startService(s)
-                } catch (_: Exception) {}
-                note(wakeStatus, "Restarting gate…", R.color.strike_text2)
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    try {
+                        val s = Intent(this, VoiceService::class.java)
+                        if (Build.VERSION.SDK_INT >= 26) startForegroundService(s) else startService(s)
+                    } catch (_: Exception) {}
+                    note(wakeStatus, "Restarting gate…", R.color.strike_text2)
+                }, 500)
             } else {
                 Prefs.setAlwaysListen(this, true)
-                startService(Intent(this, VoiceService::class.java))
-                note(wakeStatus, "ON — say “Hey Strike”", R.color.strike_ok)
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    try {
+                        startService(Intent(this, VoiceService::class.java))
+                    } catch (_: Exception) {}
+                    note(wakeStatus, "ON — say “Hey Strike”", R.color.strike_ok)
+                }, 500)
             }
             // service onCreate runs async — re-read the real state shortly after
             android.os.Handler(android.os.Looper.getMainLooper())
-                .postDelayed({ refreshStatus() }, 900)
+                .postDelayed({ refreshStatus() }, 1500)
             refreshStatus()
         }
         findViewById<Button>(R.id.talkBtn).setOnClickListener {
@@ -117,42 +144,19 @@ class SettingsActivity : AppCompatActivity() {
                 Toast.makeText(this, "Overlay already allowed", Toast.LENGTH_SHORT).show()
             }
         }
-        findViewById<Button>(R.id.modelBtn).setOnClickListener {
-            modelProgress.text = "Downloading voice models (~43MB)…"
-            Thread {
-                try {
-                    // always run: tapping again is the repair path for a
-                    // truncated/corrupt model (force re-fetch)
-                    ModelManager.download(this) { done, total ->
-                        runOnUiThread {
-                            modelProgress.text =
-                                "Vosk: ${done / 1048576}MB / ${total / 1048576}MB"
-                        }
-                    }
-                    ModelManager.downloadSherpa(this, { done, total ->
-                        runOnUiThread {
-                            modelProgress.text =
-                                "Streaming ASR: ${done / 1048576}MB / ${total / 1048576}MB"
-                        }
-                    }, force = true)
-                    runOnUiThread {
-                        modelProgress.text = "Voice models ready"
-                        refreshStatus()
-                        // models landed — (re)start the gate now; assistant boot
-                        // may have given up while they were missing
-                        try {
-                            val s = Intent(this@SettingsActivity, VoiceService::class.java)
-                            if (Build.VERSION.SDK_INT >= 26) startForegroundService(s)
-                            else startService(s)
-                        } catch (_: Exception) {}
-                    }
-                } catch (e: Exception) {
-                    runOnUiThread {
-                        modelProgress.text = "Download failed: ${e.message} — tap to retry"
-                    }
-                }
-            }.start()
+        findViewById<Button>(R.id.modelBtn).setOnClickListener { downloadModels() }
+        findViewById<Button>(R.id.langBtn).setOnClickListener {
+            val next = if (Prefs.voiceLang(this) == "hi") "en" else "hi"
+            Prefs.setVoiceLang(this, next)
+            refreshLangRow()
+            if (next == "hi" && !ModelManager.hiReady(this)) {
+                Toast.makeText(this, "Downloading Hindi voice model (~50MB)…", Toast.LENGTH_SHORT).show()
+                downloadModels()
+            } else {
+                Toast.makeText(this, "Tap Start to apply the new language", Toast.LENGTH_SHORT).show()
+            }
         }
+        refreshLangRow()
         findViewById<Button>(R.id.saveBtn).setOnClickListener {
             Prefs.saveServer(this, serverBox.text.toString().trim())
             Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
@@ -171,6 +175,59 @@ class SettingsActivity : AppCompatActivity() {
             ConversationManager.clear(this)
             Toast.makeText(this, "Conversation cleared", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun refreshLangRow() {
+        findViewById<TextView>(R.id.langStatus).text =
+            if (Prefs.voiceLang(this) == "hi") "Hindi / Hinglish" else "English"
+    }
+
+    /** Shared by Download button + Start-button precondition + Hindi switch. */
+    private fun downloadModels() {
+        val lang = Prefs.voiceLang(this)
+        modelProgress.text = "Downloading voice models…"
+        Thread {
+            try {
+                // always run: tapping again is the repair path for a
+                // truncated/corrupt model (force re-fetch)
+                if (lang == "hi") {
+                    ModelManager.downloadHi(this) { done, total ->
+                        runOnUiThread {
+                            modelProgress.text =
+                                "Hindi: ${done / 1048576}MB / ${total / 1048576}MB"
+                        }
+                    }
+                } else {
+                    ModelManager.download(this) { done, total ->
+                        runOnUiThread {
+                            modelProgress.text =
+                                "Vosk: ${done / 1048576}MB / ${total / 1048576}MB"
+                        }
+                    }
+                    ModelManager.downloadSherpa(this, { done, total ->
+                        runOnUiThread {
+                            modelProgress.text =
+                                "Streaming ASR: ${done / 1048576}MB / ${total / 1048576}MB"
+                        }
+                    }, force = true)
+                }
+                runOnUiThread {
+                    modelProgress.text = "Voice models ready"
+                    refreshStatus()
+                    // models landed — (re)start the gate now; assistant boot
+                    // may have given up while they were missing
+                    try {
+                        val s = Intent(this@SettingsActivity, VoiceService::class.java)
+                        if (Build.VERSION.SDK_INT >= 26) startForegroundService(s)
+                        else startService(s)
+                    } catch (_: Exception) {}
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    modelProgress.text = "Download failed: ${e.message} — tap to retry"
+                }
+            }
+        }.start()
     }
 
     override fun onResume() {
@@ -242,8 +299,23 @@ class SettingsActivity : AppCompatActivity() {
     private fun refreshStatus() {
         setStatus(assistantStatus, isAssistantHeld())
         val running = StrikeVoiceController.isRunning()
-        wakeStatus.text = if (running) "Listening (${StrikeVoiceController.stateName()})" else "Stopped"
-        wakeStatus.setTextColor(getColor(if (running) R.color.strike_ok else R.color.strike_err))
+        // Stopped must say WHY — "Stopped" alone sent users in circles.
+        val why = when {
+            running -> null
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+                PackageManager.PERMISSION_GRANTED -> "Stopped — mic denied, tap Grant"
+            !ModelManager.readyFor(this, Prefs.voiceLang(this)) ->
+                "Stopped — voice model missing, tap Download"
+            StrikeVoiceController.lastError != null ->
+                "Stopped — ${StrikeVoiceController.lastError}"
+            else -> "Stopped"
+        }
+        if (why == null) {
+            wakeStatus.text = "Listening (${StrikeVoiceController.stateName()})"
+            wakeStatus.setTextColor(getColor(R.color.strike_ok))
+        } else {
+            note(wakeStatus, why, R.color.strike_err)
+        }
 
         setStatus(
             micStatus,

@@ -37,9 +37,9 @@ class VoiceService : Service() {
 
         val mic = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
-        if (!mic || !ModelManager.ready(this)) return // notification already says why
+        if (!mic || !ModelManager.readyFor(this, Prefs.voiceLang(this))) return // notification already says why
 
-        if (!shell && !ModelManager.sherpaReady(this)) {
+        if (!shell && Prefs.voiceLang(this) != "hi" && !ModelManager.sherpaReady(this)) {
             // background: streaming command model; first command uses Vosk fallback
             Thread {
                 try {
@@ -79,7 +79,8 @@ class VoiceService : Service() {
             android.content.pm.PackageManager.PERMISSION_GRANTED
         val text = when {
             !mic -> "Microphone permission missing — open Hey Strike"
-            !ModelManager.ready(this) -> "Voice model missing — open Hey Strike → Download"
+            !ModelManager.readyFor(this, Prefs.voiceLang(this)) ->
+                "Voice model missing — open Hey Strike → Download"
             StrikeVoiceController.lastError != null && !StrikeVoiceController.isRunning() ->
                 "Gate error: ${StrikeVoiceController.lastError} — open app to retry"
             StrikeVoiceController.isRunning() && shell -> "Hey Strike — system assistant listening"
