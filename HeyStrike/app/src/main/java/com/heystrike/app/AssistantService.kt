@@ -318,10 +318,13 @@ class AssistantSession(ctx: Context) : VoiceInteractionSession(ctx) {
                     if (myGen != gen) return@handleStream
                     flush(true)
                     if (full.isNotBlank()) ConversationManager.recordAnswer(context, full.toString())
-                    Log.i(TAG, "agent completed")
+                    Log.i(TAG, "agent completed; draining TTS queue")
+                    // 3.5s linger, then REAL queue drain — fixed 3.5s flat cut
+                    // long answers off mid-word
                     try { Thread.sleep(3500) } catch (_: Exception) {}
+                    var guard = 0
+                    while (tts?.isSpeaking == true && myGen == gen && guard++ < 120) Thread.sleep(500)
                     if (myGen != gen) return@handleStream
-                    // ponytail: "tts completed" logged here, not at real queue end
                     Log.i(TAG, "tts completed; wake gate resumed")
                     StrikeVoiceController.notifyIdle()
                     main.post { if (myGen == gen) hide() }

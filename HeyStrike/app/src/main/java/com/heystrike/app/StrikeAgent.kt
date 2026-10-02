@@ -58,16 +58,21 @@ class StrikeAgent(private val ctx: Context) {
     private fun findNode(match: String): AccessibilityNodeInfo? {
         val root = StrikeAccessibilityService.instance?.rootInActiveWindow ?: return null
         val q = match.lowercase()
-        val queue = ArrayDeque<AccessibilityNodeInfo>()
-        queue.add(root)
-        var seen = 0
-        while (queue.isNotEmpty() && seen < 300) {
-            val n = queue.removeFirst()
-            seen++
-            val t = (n.text?.toString() ?: "").lowercase()
-            val d = (n.contentDescription?.toString() ?: "").lowercase()
-            if (q in t || q in d) return n
-            for (i in 0 until n.childCount) n.getChild(i)?.let { queue.add(it) }
+        // pass 1 exact match, pass 2 substring — "send" must not hit
+        // "Send and receive" when a literal "Send" exists
+        for (exact in booleanArrayOf(true, false)) {
+            var seen = 0
+            val queue = ArrayDeque<AccessibilityNodeInfo>()
+            queue.add(root)
+            while (queue.isNotEmpty() && seen < 300) {
+                val n = queue.removeFirst()
+                seen++
+                val t = (n.text?.toString() ?: "").lowercase()
+                val d = (n.contentDescription?.toString() ?: "").lowercase()
+                val hit = if (exact) (t == q || d == q) else (q in t || q in d)
+                if (hit) return n
+                for (i in 0 until n.childCount) n.getChild(i)?.let { queue.add(it) }
+            }
         }
         return null
     }
@@ -89,7 +94,10 @@ class StrikeAgent(private val ctx: Context) {
                     i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     ctx.startActivity(i)
                     Thread.sleep(1500)
-                    "ok: launched $arg"
+                    // verify: never claim open unless it is actually foreground
+                    val active = StrikeAccessibilityService.getActivePackage()
+                    if (active == pkg) "ok: launched $arg"
+                    else "fail: $arg not in foreground (now: ${active ?: "none"})"
                 } catch (e: Exception) { "fail: ${e.message}" }
             }
             "tap" -> if (svc == null) "fail: tap service off"
@@ -183,6 +191,7 @@ Screen now:
             return "Enable Strike Tap in Accessibility settings first (button 7), then retry."
         val log = StringBuilder()
         var screen = observe()
+        var drafted = false // a type() draft exists — enter() would submit it
         repeat(8) { round ->
             if (stopRequested) return "Stopped."
             val reply = askQwen(sys + screen, "Goal: $goal\nDone so far:\n$log")
@@ -204,7 +213,7 @@ Screen now:
                 if (name.equals("done", true)) return arg.ifBlank { plain }.take(500)
                 val cleanArg = arg.trim('\'', '"', ' ')
                 // spec 16/32: HITL barrier — never tap send/delete/pay unconfirmed
-                val level = AgentPermissions.levelFor(name, cleanArg)
+                val level = AgentPermissions.levelFor(name, cleanArg, drafted)
                 if (level != AgentPermissions.Level.SAFE) {
                     val pc = PendingConfirm.set(name, cleanArg, level)
                     log.append("confirm required: $name($cleanArg)\n")
@@ -213,6 +222,11 @@ Screen now:
                 val res = tool(name, cleanArg)
                 log.append("$name($arg) -> $res\n")
                 ConversationManager.recordToolResult(ctx, "$name($arg) -> $res")
+                if (name.equals("type", true) && res.startsWith("ok")) drafted = true
+                if (name.equals("enter", true)) drafted = false
+                // verify-after-act: a failed step ends the round — the next
+                // round re-observes and replans instead of acting blind
+                if (res.startsWith("fail") || res.startsWith("not-verified")) break
             }
             screen = observe()
         }

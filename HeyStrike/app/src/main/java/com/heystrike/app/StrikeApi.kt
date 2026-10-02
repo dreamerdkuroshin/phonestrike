@@ -53,7 +53,7 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
             ContactResolver.pick(t)?.let { m ->
                 pendingContact = null
                 // case-insensitive: name came from the lowercased transcript
-                return handle(injectName(raw, name, m.name ?: name))
+                return handle(injectName(raw, name, m.name ?: name), record = false)
             }
         }
         // deterministic contact intents (resolve -> never invent -> ask if many)
@@ -194,6 +194,9 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
             return
         }
         if (record) ConversationManager.recordUser(ctx, text)
+        // fresh command: a stale Stop from a previous turn must not kill this
+        // stream (askServerStream polls stopRequested while reading SSE)
+        StrikeAgent.stopRequested = false
         val t = text.lowercase().trim()
         // HITL confirmation release ("yes"/"no") — before every other route
         PendingConfirm.consume(t, ctx)?.let { ans ->
@@ -217,13 +220,14 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
             return
         }
         // pending contact ambiguity follow-up: "beru" / "second one"
-        pendingContact?.let { (raw, name) ->
-            ContactResolver.pick(t)?.let { m ->
-                pendingContact = null
-                handleStream(injectName(raw, name, m.name ?: name), onToken, onDone)
-                return
-            }
-        }
+                pendingContact?.let { (raw, name) ->
+                    ContactResolver.pick(t)?.let { m ->
+                        pendingContact = null
+                        // record=false: the original command was already recorded
+                        handleStream(injectName(raw, name, m.name ?: name), onToken, onDone, record = false)
+                        return
+                    }
+                }
         // deterministic contact intents (resolve -> never invent -> ask if many)
         contactIntent(t)?.let { (verb, name) ->
             contactRoute(text, verb, name)?.let { ans ->
@@ -462,11 +466,17 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
             val body = JSONObject().put("text", prompt).toString().toByteArray()
             c.outputStream.use { it.write(body) }
             c.inputStream.bufferedReader().useLines { lines ->
-                lines.forEach { line ->
+                for (line in lines) {
+                    // emergency stop (spec 58): cut the stream instead of
+                    // reading a dead answer to EOF
+                    if (StrikeAgent.stopRequested) {
+                        c.disconnect()
+                        break
+                    }
                     val s = line.trim()
-                    if (!s.startsWith("data:")) return@forEach
+                    if (!s.startsWith("data:")) continue
                     val payload = s.removePrefix("data:").trim()
-                    if (payload == "[DONE]") return@forEach
+                    if (payload == "[DONE]") continue
                     try {
                         val tok = JSONObject(payload).optString("token", "")
                         if (tok.isNotEmpty()) {
@@ -482,7 +492,8 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
             answer.append(msg)
             onToken(msg)
         } finally {
-            if (answer.isNotBlank()) ConversationManager.recordAnswer(ctx, answer.toString())
+            // answer recording belongs to the UI-layer onDone callers only —
+            // doing it here as well double-recorded every streamed answer
             onDone()
         }
     }

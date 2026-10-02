@@ -22,6 +22,7 @@ object PendingConfirm {
     fun set(tool: String, arg: String, level: AgentPermissions.Level): Pending {
         val p = Pending(tool, arg, level.name, System.currentTimeMillis())
         pending = p
+        ConversationManager.onChange?.invoke() // repaint the confirm card now
         return p
     }
 

@@ -21,7 +21,10 @@ object AgentPermissions {
     private fun hasWord(text: String, word: String): Boolean =
         Regex("\\b" + Regex.escape(word) + "\\b").containsMatchIn(text)
 
-    fun levelFor(tool: String, arg: String): Level {
+    fun levelFor(tool: String, arg: String, drafted: Boolean = false): Level {
+        // enter() after a typed draft SUBMITS it (send/search) — gate it;
+        // bare enter() with no draft (e.g. search field only) stays quick
+        if (tool.equals("enter", true)) return if (drafted) Level.CONFIRM else Level.SAFE
         if (!tool.equals("tap", true)) return Level.SAFE // typing drafts is safe; the tap sends
         val a = arg.lowercase()
         if (criticalWords.any { hasWord(a, it) }) return Level.CRITICAL

@@ -25,6 +25,10 @@ object ConversationManager {
         return sp
     }
 
+    /** UI repaint hook (task card / chat) — set by the foreground activity. */
+    @Volatile
+    var onChange: (() -> Unit)? = null
+
     /** Fresh conversation id when the gap since last activity > 30 min. */
     fun conversationId(c: Context): String {
         val now = SystemClock.elapsedRealtime()
@@ -72,9 +76,9 @@ object ConversationManager {
     }
 
     fun recordAnswer(c: Context, text: String) {
-        // idempotent (stream + caller both report) — compare truncated: lastReply
-        // is stored truncated, a >240-char repeat must still dedupe
-        if (text.isBlank() || text.take(TURN_CHARS) == lastReply(c)) return
+        // one record per turn: callers' onDone is the single writer (the old
+        // stream+caller dedupe also swallowed legitimately repeated answers)
+        if (text.isBlank()) return
         prefs(c).edit()
             .putString("last_reply", text.take(TURN_CHARS))
             .putString("turns", push(prefs(c).getString("turns", "") ?: "", "strike", text))
@@ -83,15 +87,18 @@ object ConversationManager {
 
     fun setTask(c: Context, text: String) {
         prefs(c).edit().putString("task", text.take(TURN_CHARS)).apply()
+        onChange?.invoke()
     }
 
     /** Task finished/stopped: drop it so the task card + Stop button don't go stale. */
     fun clearTask(c: Context) {
         prefs(c).edit().remove("task").remove("tool").apply()
+        onChange?.invoke()
     }
 
     fun recordToolResult(c: Context, text: String) {
         prefs(c).edit().putString("tool", text.take(TURN_CHARS)).apply()
+        onChange?.invoke()
     }
 
     /** True for short contextless follow-ups ("again", "what about tomorrow"). */
@@ -122,6 +129,15 @@ object ConversationManager {
             (prefs(c).getString("mem", "") ?: "").lines().filter { it.isNotBlank() }
                 .takeIf { it.isNotEmpty() }
                 ?.let { append("; past queries from earlier sessions: [" + it.joinToString("; ") + "]") }
+            // recent turns verbatim: the header alone lost multi-turn context
+            turns.lines().filter { it.contains('|') }.takeLast(4).takeIf { it.isNotEmpty() }
+                ?.let { tl ->
+                    append("; recent turns: [" + tl.joinToString(" / ") { line ->
+                        val i = line.indexOf('|')
+                        (if (line.startsWith("user|")) "U: " else "S: ") +
+                            line.substring(i + 1).take(160)
+                    } + "]")
+                }
             if (isFollowUp(c, text)) append("; the user is following up on this topic — interpret in that context")
             append("]\n")
         }
