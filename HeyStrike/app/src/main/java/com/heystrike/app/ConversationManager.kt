@@ -85,6 +85,11 @@ object ConversationManager {
         prefs(c).edit().putString("task", text.take(TURN_CHARS)).apply()
     }
 
+    /** Task finished/stopped: drop it so the task card + Stop button don't go stale. */
+    fun clearTask(c: Context) {
+        prefs(c).edit().remove("task").remove("tool").apply()
+    }
+
     fun recordToolResult(c: Context, text: String) {
         prefs(c).edit().putString("tool", text.take(TURN_CHARS)).apply()
     }

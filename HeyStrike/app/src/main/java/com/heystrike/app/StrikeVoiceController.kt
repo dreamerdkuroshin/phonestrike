@@ -58,6 +58,8 @@ object StrikeVoiceController {
     @Volatile private var t2 = 0L
     @Volatile private var t3 = 0L
     @Volatile private var t4 = 0L
+    // per-command trace id (spec 21: one id ties speech -> STT -> plan -> tools)
+    @Volatile private var traceSeq = 0
 
     @Volatile
     var state: State = State.IDLE
@@ -276,12 +278,17 @@ object StrikeVoiceController {
                 if (text.isBlank()) {
                     Log.i(TAG, "no speech captured — back to listening")
                     enterCooldownLocked()
+                    // blank command left the orb/session on screen forever (all
+                    // buttons untouchable) — dismiss both explicitly
+                    appCtx?.let { c -> main.post { OverlayService.hideNow(c) } }
+                    main.post { AssistantSessionService.active?.hide() }
                     return@synchronized
                 }
                 t3 = SystemClock.uptimeMillis()
+                val trace = ++traceSeq
                 setStateInternal(State.PROCESSING)
-                Log.i(TAG, "T3 final transcript (+${t3 - t0}ms after T0)")
-                Log.i(TAG, "command captured: \"$text\"")
+                Log.i(TAG, "TRACE $trace | T3 final transcript (+${t3 - t0}ms after T0)")
+                Log.i(TAG, "TRACE $trace | command: \"$text\"")
                 onCommandCb?.invoke(text)
             }
         },

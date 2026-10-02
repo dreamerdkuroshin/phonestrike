@@ -10,6 +10,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
+import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
@@ -48,6 +49,7 @@ class MainActivity : AppCompatActivity() {
         // ACTION_ASSIST: launched as system assistant — show the orb, not home
         if (intent?.action == Intent.ACTION_ASSIST) {
             OverlayService.show(this)
+            StrikeVoiceController.requestCapture()
             finish()
             return
         }
@@ -75,7 +77,17 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
         findViewById<ImageButton>(R.id.micBtn).setOnClickListener {
+            // push-to-talk: show the orb AND ask the gate for a one-shot capture
+            // (before: the orb showed with no STT consumer and blocked all input)
+            val running = StrikeVoiceController.isRunning()
+            if (!running) {
+                try {
+                    val s = Intent(this, VoiceService::class.java)
+                    if (Build.VERSION.SDK_INT >= 26) startForegroundService(s) else startService(s)
+                } catch (_: Exception) {}
+            }
             OverlayService.show(this)
+            main.postDelayed({ StrikeVoiceController.requestCapture() }, if (running) 0 else 1800)
         }
         findViewById<ImageButton>(R.id.sendBtn).setOnClickListener {
             send(textBox.text.toString())
@@ -87,9 +99,10 @@ class MainActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.chipWhatsApp).setOnClickListener { send("open whatsapp") }
         findViewById<TextView>(R.id.chipYouTube).setOnClickListener { send("open youtube") }
         findViewById<TextView>(R.id.chipSettings).setOnClickListener { send("open settings") }
-        findViewById<TextView>(R.id.stopBtn).setOnClickListener {
+        findViewById<Button>(R.id.stopBtn).setOnClickListener {
             StrikeAgent.stopRequested = true
-            taskStep.text = "Stopping…"
+            ConversationManager.clearTask(this)
+            taskCard.visibility = View.GONE
         }
 
         renderState(StrikeVoiceController.state)

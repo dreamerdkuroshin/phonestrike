@@ -301,11 +301,17 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         else { ctx.startActivity(i); true }
     } catch (_: Exception) { false }
 
-    private fun runPlanner(text: String): String = try {
-        ConversationManager.setTask(ctx, text)
-        StrikeAgent.stopRequested = false // fresh run clears a stale Stop press
-        StrikeAgent(ctx).run(text)
-    } catch (e: Exception) { "Planner failed: ${e.message}" }
+    private fun runPlanner(text: String): String {
+        return try {
+            ConversationManager.setTask(ctx, text)
+            StrikeAgent.stopRequested = false // fresh run clears a stale Stop press
+            StrikeAgent(ctx).run(text)
+        } catch (e: Exception) {
+            "Planner failed: ${e.message}"
+        } finally {
+            ConversationManager.clearTask(ctx) // done or failed — card/Stop reset
+        }
+    }
 
     // ---------- conversation-agent enrichment (screen + live web facts) ----------
 

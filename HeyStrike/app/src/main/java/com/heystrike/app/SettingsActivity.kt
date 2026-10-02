@@ -88,7 +88,18 @@ class SettingsActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.talkBtn).setOnClickListener {
             Prefs.saveServer(this, serverBox.text.toString().trim())
+            // push-to-talk: orb + one-shot gate capture (orb alone had no STT
+            // consumer and froze the screen behind it)
+            val running = StrikeVoiceController.isRunning()
+            if (!running) {
+                try {
+                    val s = Intent(this, VoiceService::class.java)
+                    if (Build.VERSION.SDK_INT >= 26) startForegroundService(s) else startService(s)
+                } catch (_: Exception) {}
+            }
             OverlayService.show(this)
+            android.os.Handler(android.os.Looper.getMainLooper())
+                .postDelayed({ StrikeVoiceController.requestCapture() }, if (running) 0 else 1800)
             finish()
         }
         findViewById<Button>(R.id.grantBtn).setOnClickListener {
@@ -127,6 +138,13 @@ class SettingsActivity : AppCompatActivity() {
                     runOnUiThread {
                         modelProgress.text = "Voice models ready"
                         refreshStatus()
+                        // models landed — (re)start the gate now; assistant boot
+                        // may have given up while they were missing
+                        try {
+                            val s = Intent(this@SettingsActivity, VoiceService::class.java)
+                            if (Build.VERSION.SDK_INT >= 26) startForegroundService(s)
+                            else startService(s)
+                        } catch (_: Exception) {}
                     }
                 } catch (e: Exception) {
                     runOnUiThread {

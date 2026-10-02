@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
@@ -79,6 +80,22 @@ class OverlayService : Service() {
         }
     }
 
+    // The orb window is FULL-SCREEN: if nothing ever hides it, every button in
+    // every app becomes untouchable. Watchdog guarantees auto-dismiss.
+    private val main = Handler(android.os.Looper.getMainLooper())
+    private var watchdog: Runnable? = null
+
+    private fun armWatchdog(ms: Long) {
+        watchdog?.let { main.removeCallbacks(it) }
+        val w = Runnable {
+            Log.w(TAG, "orb watchdog fired — dismissing (no answer path)")
+            hide()
+            stopSelf()
+        }
+        watchdog = w
+        main.postDelayed(w, ms)
+    }
+
     private fun startFg() {
         val ch = "strike_overlay"
         if (Build.VERSION.SDK_INT >= 26) {
@@ -124,6 +141,8 @@ class OverlayService : Service() {
         }
         wm?.addView(root, params())
         showing = true
+        // idle orb (mic tap / wake with no answer yet): never block the screen >15s
+        armWatchdog(15_000)
     }
 
     private var gen = 0 // glitch guard: overlapping answers can't fight over the orb
@@ -134,6 +153,7 @@ class OverlayService : Service() {
     private fun answerAndClose(text: String) {
         val myGen = ++gen
         speaking = false
+        armWatchdog(90_000) // answers live up to ~90s; still never permanent
         Log.i(TAG, "agent started")
         Thread {
             // first speak() before onInit = silent answer — wait here (bg thread)
@@ -190,6 +210,8 @@ class OverlayService : Service() {
     }
 
     private fun hide() {
+        watchdog?.let { main.removeCallbacks(it) }
+        watchdog = null
         try { root?.let { wm?.removeView(it) } } catch (_: Exception) {}
         root = null
         showing = false
@@ -223,6 +245,14 @@ class OverlayService : Service() {
                 Log.w(TAG, "overlay start declined: ${e.message}")
             }
         }
+
+        /** Dismiss the orb if it is showing (blank command, session cleanup). */
+        fun hideNow(c: Context) {
+            if (!showing) return
+            try {
+                c.startService(Intent(c, OverlayService::class.java).apply { action = ACTION_HIDE })
+            } catch (_: Exception) {}
+        }
     }
 }
 
@@ -232,7 +262,7 @@ class SiriOrbView(c: Context, onTap: () -> Unit) : FrameLayout(c) {
         setTextColor(0xFFFFFFFF.toInt())
         textSize = 18f
         gravity = android.view.Gravity.CENTER
-        text = "Listening…"
+        text = "Listening…\n(tap to close)"
         setPadding(48, 48, 48, 48)
     }
     private val orb = View(c).apply {
