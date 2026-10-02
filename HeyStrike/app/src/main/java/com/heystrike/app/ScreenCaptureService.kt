@@ -21,6 +21,7 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.util.Base64
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
@@ -198,7 +199,10 @@ class ScreenCaptureService : Service() {
                 startForeground(3, n)
             }
         } catch (e: Exception) {
-            // no notification permission: still proceed with the grant we hold
+            // startForegroundService() obligation: stop instead of letting the
+            // system fire RemoteServiceException for a missed startForeground
+            Log.e("HeyStrikeAssistant", "capture foreground declined: ${e.message} — stopping")
+            stopSelf()
         }
     }
 

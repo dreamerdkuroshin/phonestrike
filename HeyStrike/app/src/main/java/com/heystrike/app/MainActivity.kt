@@ -1,5 +1,6 @@
 package com.heystrike.app
 
+import android.Manifest
 import android.app.role.RoleManager
 import android.content.Intent
 import android.graphics.Color
@@ -100,10 +101,11 @@ class MainActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.chipYouTube).setOnClickListener { send("open youtube") }
         findViewById<TextView>(R.id.chipSettings).setOnClickListener { send("open settings") }
         findViewById<Button>(R.id.stopBtn).setOnClickListener {
-            // emergency stop (spec 58): agent + TTS + pending confirm, all layers
+            // emergency stop (spec 58): agent + TTS (both layers) + pending confirm
             StrikeAgent.stopRequested = true
             PendingConfirm.clear(this)
             OverlayService.inst?.interruptAnswer()
+            AssistantSessionService.active?.interruptSpeaking()
             StrikeVoiceController.notifyIdle()
             ConversationManager.clearTask(this)
             taskCard.visibility = View.GONE
@@ -126,6 +128,25 @@ class MainActivity : AppCompatActivity() {
         renderState(StrikeVoiceController.state)
         refreshTaskCard()
         refreshConnectionDot()
+        requestMissingPermissions()
+    }
+
+    // First run: mic permission was previously only requestable from
+    // Settings → Grant, so a fresh install had no way to start the gate.
+    private fun requestMissingPermissions() {
+        val need = mutableListOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.READ_CONTACTS)
+        if (Build.VERSION.SDK_INT >= 33) need.add(Manifest.permission.POST_NOTIFICATIONS)
+        val missing = need.filter {
+            checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 101)
+    }
+
+    override fun onRequestPermissionsResult(code: Int, perms: Array<String>, res: IntArray) {
+        super.onRequestPermissionsResult(code, perms, res)
+        if (code == 101 && res.isNotEmpty() && res.all {
+                it == android.content.pm.PackageManager.PERMISSION_GRANTED
+            }) refreshVoiceService()
     }
 
     private fun greet(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
@@ -210,10 +231,12 @@ class MainActivity : AppCompatActivity() {
 
     private val stateListener: (StrikeVoiceController.State) -> Unit = { s ->
         renderState(s)
-        if (s == StrikeVoiceController.State.PROCESSING ||
-            s == StrikeVoiceController.State.COOLDOWN ||
-            s == StrikeVoiceController.State.IDLE ||
-            s == StrikeVoiceController.State.ASSISTANT_SPEAKING
+        // a live chat stream owns liveIdx — reloading here would silently
+        // drop its remaining tokens (onDone reloads instead)
+        if (liveIdx < 0 && (s == StrikeVoiceController.State.PROCESSING ||
+                s == StrikeVoiceController.State.COOLDOWN ||
+                s == StrikeVoiceController.State.IDLE ||
+                s == StrikeVoiceController.State.ASSISTANT_SPEAKING)
         ) {
             reloadTurns()
             refreshTaskCard()
@@ -260,21 +283,37 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (!::greeting.isInitialized) return // ACTION_ASSIST early-finish path
         StrikeVoiceController.addStateListener(stateListener)
+        // live task-card repaint while the agent records tool steps
+        ConversationManager.onChange = { runOnUiThread { refreshTaskCard() } }
         renderState(StrikeVoiceController.state)
         reloadTurns()
         refreshTaskCard()
         refreshConnectionDot()
-        if (isAssistantHeld()) {
-            try {
-                val s = Intent(this, VoiceService::class.java)
-                if (Build.VERSION.SDK_INT >= 26) startForegroundService(s) else startService(s)
-            } catch (_: Exception) {}
-        }
+        refreshVoiceService()
+    }
+
+    /**
+     * Wake word without a button: assistant-role OR standalone always-listen
+     * starts/revives the mic service on every foreground visit (OEM kills,
+     * swipe-away, process death). Consent-gated — never starts for users who
+     * didn't opt in via Settings → Start / Set as assistant.
+     */
+    private fun refreshVoiceService() {
+        val mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!mic || !(isAssistantHeld() || Prefs.alwaysListen(this))) return
+        try {
+            val s = Intent(this, VoiceService::class.java)
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(s) else startService(s)
+        } catch (_: Exception) {}
     }
 
     override fun onPause() {
         super.onPause()
-        if (::greeting.isInitialized) StrikeVoiceController.removeStateListener(stateListener)
+        if (::greeting.isInitialized) {
+            StrikeVoiceController.removeStateListener(stateListener)
+            ConversationManager.onChange = null
+        }
     }
 
     private fun isAssistantHeld(): Boolean {

@@ -160,12 +160,20 @@ object StrikeVoiceController {
     /** Session/gesture path: one-shot command capture on the live stream. */
     fun requestCapture() {
         synchronized(lock) {
-            if (state != State.IDLE) {
-                Log.i(TAG, "capture request refused — one command at a time (state=$state)")
-                return
+            when (state) {
+                State.IDLE, State.COOLDOWN, State.INTERRUPTED -> {}
+                State.PROCESSING, State.ASSISTANT_SPEAKING -> {
+                    // explicit gesture (mic/assist key) beats the current answer
+                    setStateInternal(State.INTERRUPTED)
+                    onInterruptCb?.let { main.post { it() } }
+                }
+                else -> {
+                    Log.i(TAG, "capture request refused — one command at a time (state=$state)")
+                    return
+                }
             }
             gate?.requestCommand()
-            Log.i(TAG, "session requested command capture")
+            Log.i(TAG, "session requested command capture (state=$state)")
         }
     }
 

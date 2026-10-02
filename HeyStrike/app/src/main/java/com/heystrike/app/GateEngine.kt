@@ -180,8 +180,10 @@ class GateEngine(
                     echoFrames = 0
                     StrikeVoiceController.noteWake()
                     onBargeIn()
-                    val tail = ring.tail()
-                    doCommand(tail, beep = false)
+                    // The ring is full of our own TTS echo — never replay it into
+                    // the command ASR; capture the new turn from live audio only.
+                    ring.clear()
+                    doCommand(ByteArray(0), beep = false)
                     cooldownUntil = System.currentTimeMillis() + 4000
                     try { gate?.close() } catch (_: Exception) {}
                     val m = model ?: break
@@ -191,7 +193,8 @@ class GateEngine(
 
                 val inCooldown = System.currentTimeMillis() < cooldownUntil
                 if (wake && inCooldown) continue
-                if (!wake && commandRequested && inCooldown) continue
+                // commandRequested is an explicit user gesture (mic/assist key):
+                // it is never suppressed by the wake cooldown
                 if (wake || commandRequested) {
                     commandRequested = false
                     // snapshot the tail BEFORE live reading resumes
@@ -248,7 +251,9 @@ class GateEngine(
                 StrikeVoiceController.noteCommandListening()
 
                 val buf = ByteArray(4096)
-                val deadline = System.currentTimeMillis() + 15_000
+                // no-speech bail at 15s; the cap re-anchors on first speech so
+                // long commands aren't cut mid-sentence by a capture-start timer
+                var deadline = System.currentTimeMillis() + 15_000
                 var phase = Phase.WAITING
                 var speechStarted = false
                 var lastPartial = ""
@@ -285,6 +290,7 @@ class GateEngine(
                                 speechStarted = true
                                 phase = Phase.SPEAKING
                                 onSpeechStart()
+                                deadline = System.currentTimeMillis() + 25_000
                             }
                             if (endpointed && speechStarted) {
                                 onEndpoint()
@@ -303,7 +309,14 @@ class GateEngine(
                 decodeAll(rec, stream)
                 StrikeVoiceController.noteFinalized()
                 val fin = rec.getResult(stream).text.orEmpty().trim()
+                if (!speechStarted) {
+                    // silence/noise: blank command, never a 15s Vosk re-wait
+                    onCommand("")
+                    return true
+                }
+                if (fin.isEmpty()) return false // decode dropped it — Vosk replays the tail
                 onCommand(fin)
+                true
             } finally {
                 stream.release()
             }
@@ -354,11 +367,12 @@ class GateEngine(
                 debug = false
             }
             // rule1: 2.4s bare silence; rule2: 1.0s trailing silence WITH
-            // speech (+0.4s app grace = 1.4s total); rule3: 15s utterance cap
+            // speech (+0.4s app grace = 1.4s total); rule3: 30s utterance cap
+            // (safety only — matches the speech-anchored 25s loop deadline)
             val endpoint = EndpointConfig(
                 EndpointRule(false, 2.4f, 0f),
                 EndpointRule(true, 1.0f, 0f),
-                EndpointRule(false, 0f, 15f)
+                EndpointRule(false, 0f, 30f)
             )
             val config = OnlineRecognizerConfig().apply {
                 modelConfig = mc
@@ -389,15 +403,16 @@ class GateEngine(
             val m = model ?: return
             cmd = Recognizer(m, 16000f)
             // t1=5s max silence-to-finalize chain, t2=1.2s endpoint silence,
-            // t3=15s hard cap (safety only — endpointing decides, not a timer)
-            cmd.setEndpointerDelays(5.0f, 1.2f, 15.0f)
+            // t3=30s hard cap (safety only — endpointing decides, not a timer)
+            cmd.setEndpointerDelays(5.0f, 1.2f, 30.0f)
             // replay recent audio: words immediately after "hey strike"
             // would otherwise be swallowed together with the wake recognizer
             if (tail.isNotEmpty()) cmd.acceptWaveForm(tail, tail.size)
             StrikeVoiceController.noteCommandListening()
 
             val buf = ByteArray(4096)
-            val deadline = System.currentTimeMillis() + 15_000
+            // no-speech bail 15s from capture; re-anchors on first speech
+            var deadline = System.currentTimeMillis() + 15_000
             val segs = mutableListOf<String>()
             var phase = Phase.WAITING
             var speechStarted = false
@@ -423,7 +438,9 @@ class GateEngine(
                             phase = Phase.SPEAKING
                             onSpeechStart()
                             onPartial(p)
-                        } else if (endpointed || System.currentTimeMillis() >= graceUntil) {
+                        } else if (System.currentTimeMillis() >= graceUntil) {
+                            // grace ONLY decides: an endpoint during the window
+                            // must not truncate mid-sentence pauses
                             phase = Phase.FINALIZED
                         }
                     }
@@ -436,6 +453,7 @@ class GateEngine(
                             speechStarted = true
                             phase = Phase.SPEAKING
                             onSpeechStart()
+                            deadline = System.currentTimeMillis() + 25_000
                         }
                         if (endpointed) {
                             if (speechStarted) {

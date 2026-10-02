@@ -8,6 +8,8 @@
     <!-- Keep listening + answering with screen off -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Orb service records no audio: mic-type FGS from background = crash/denied -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Talk to local PocketStrike server -->
@@ -116,8 +118,12 @@
 
         <service
             android:name=".OverlayService"
-            android:foregroundServiceType="microphone"
-            android:exported="false" />
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Floating voice-assistant orb that speaks answers over other apps" />
+        </service>
 
         <receiver
             android:name=".BootReceiver"
