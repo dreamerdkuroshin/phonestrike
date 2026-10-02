@@ -23,6 +23,12 @@ import java.net.URL
  */
 class StrikeAgent(private val ctx: Context) {
 
+    companion object {
+        /** UI Stop button: set true to abort between rounds/steps. */
+        @Volatile
+        var stopRequested = false
+    }
+
     // ---------- ObserveScreen: compact UI tree ----------
     fun observe(): String {
         val root = StrikeAccessibilityService.instance?.rootInActiveWindow
@@ -177,6 +183,7 @@ Screen now:
         val log = StringBuilder()
         var screen = observe()
         repeat(8) { round ->
+            if (stopRequested) return "Stopped."
             val reply = askQwen(sys + screen, "Goal: $goal\nDone so far:\n$log")
             if (reply.startsWith("BRAIN_OFFLINE")) return "Brain offline — in Termux run start-all.sh"
             val calls = Regex("""\[TOOL_CALL:\s*(\w+)\((.*?)\)\s*\]""").findAll(reply).toList()
@@ -192,9 +199,11 @@ Screen now:
                 return fin.take(500)
             }
             for ((name, arg) in bare) {
+                if (stopRequested) return "Stopped."
                 if (name.equals("done", true)) return arg.ifBlank { plain }.take(500)
                 val res = tool(name, arg.trim('\'', '"', ' '))
                 log.append("$name($arg) -> $res\n")
+                ConversationManager.recordToolResult(ctx, "$name($arg) -> $res")
             }
             screen = observe()
         }

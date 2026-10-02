@@ -1,5 +1,8 @@
 package com.heystrike.app
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -8,10 +11,12 @@ import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import androidx.core.app.NotificationCompat
 import java.util.Locale
 
 /**
@@ -29,10 +34,29 @@ class OverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        inst = this
         tts = TextToSpeech(this) { st ->
-            if (st == TextToSpeech.SUCCESS) tts?.language = Locale.US
+            if (st == TextToSpeech.SUCCESS) {
+                tts?.language = Locale.US
+                ttsReady = true
+            }
         }
         api = StrikeApi(applicationContext, tts)
+    }
+
+    /** Live partial transcript from the gate (main thread). */
+    fun showPartial(text: String) {
+        if (!showing) return
+        (root as? SiriOrbView)?.setText("Listening…\n“$text”")
+    }
+
+    /** Barge-in: stop TTS + cancel the answer thread; gate captures the new turn. */
+    fun interruptAnswer() {
+        gen++
+        tts?.stop()
+        speaking = false
+        (root as? SiriOrbView)?.setText("Interrupted — listening…")
+        Log.i(TAG, "overlay answer interrupted by user")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, id: Int): Int {
@@ -43,12 +67,33 @@ class OverlayService : Service() {
                 return START_NOT_STICKY
             }
             else -> {
+                // started via startForegroundService: must enter FGS within 5s
+                // (fixes ForegroundServiceDidNotStartInTimeException on API 31+)
+                startFg()
                 val heard = intent?.getStringExtra("heard").orEmpty()
                 showOrb()
                 // If launched with text already, answer it; else listening state stays for STT caller.
                 if (heard.isNotBlank()) answerAndClose(heard)
                 return START_STICKY
             }
+        }
+    }
+
+    private fun startFg() {
+        val ch = "strike_overlay"
+        if (Build.VERSION.SDK_INT >= 26) {
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+                .createNotificationChannel(NotificationChannel(ch, "Hey Strike", NotificationManager.IMPORTANCE_LOW))
+        }
+        val n: Notification = NotificationCompat.Builder(this, ch)
+            .setContentTitle("Hey Strike")
+            .setContentText("Voice session active")
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setOngoing(true).build()
+        try {
+            startForeground(2, n)
+        } catch (e: Exception) {
+            Log.w(TAG, "overlay foreground declined: ${e.message}")
         }
     }
 
@@ -68,6 +113,7 @@ class OverlayService : Service() {
         if (!Settings.canDrawOverlays(this)) {
             val i = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(i)
+            stopSelf() // no overlay possible — don't idle as a foreground service
             return
         }
         if (root != null) return
@@ -77,13 +123,22 @@ class OverlayService : Service() {
             stopSelf()
         }
         wm?.addView(root, params())
+        showing = true
     }
 
     private var gen = 0 // glitch guard: overlapping answers can't fight over the orb
+    private var speaking = false
+
+    private var ttsReady = false
 
     private fun answerAndClose(text: String) {
         val myGen = ++gen
+        speaking = false
+        Log.i(TAG, "agent started")
         Thread {
+            // first speak() before onInit = silent answer — wait here (bg thread)
+            var guard = 0
+            while (!ttsReady && tts != null && guard++ < 50) Thread.sleep(100)
             (root as? SiriOrbView)?.setText("“$text”\n\n…")
             val full = StringBuilder()
             val pending = StringBuilder()
@@ -108,8 +163,13 @@ class OverlayService : Service() {
                 onDone = {
                     if (myGen != gen) return@handleStream
                     flushSpeech(true)
+                    if (full.isNotBlank()) ConversationManager.recordAnswer(applicationContext, full.toString())
+                    Log.i(TAG, "agent completed")
                     try { Thread.sleep(3500) } catch (_: Exception) {}
                     if (myGen != gen) return@handleStream
+                    // ponytail: "tts completed" logged here, not at real queue end
+                    Log.i(TAG, "tts completed; wake gate resumed")
+                    StrikeVoiceController.notifyIdle()
                     hide()
                     stopSelf()
                 })
@@ -120,6 +180,11 @@ class OverlayService : Service() {
         if (s.isBlank()) return
         val clean = s.replace(Regex("[\\uD83C-\\uDBFF\\uDC00-\\uDFFF☀-➿➕➖*#>`_]"), "").trim().take(400)
         if (clean.isBlank()) return
+        if (!speaking) {
+            speaking = true
+            StrikeVoiceController.notifySpeaking()
+            Log.i(TAG, "tts started")
+        }
         // QUEUE_ADD = ChatGPT-style continuous speech while text keeps streaming
         tts?.speak(clean, TextToSpeech.QUEUE_ADD, null, "strike$gen")
     }
@@ -127,9 +192,11 @@ class OverlayService : Service() {
     private fun hide() {
         try { root?.let { wm?.removeView(it) } } catch (_: Exception) {}
         root = null
+        showing = false
     }
 
     override fun onDestroy() {
+        inst = null
         hide()
         tts?.shutdown()
         super.onDestroy()
@@ -137,10 +204,24 @@ class OverlayService : Service() {
 
     companion object {
         const val ACTION_HIDE = "hide"
+        const val TAG = "HeyStrikeAssistant"
+
+        /** True while the orb is on screen (guards stale HIDE intents). */
+        @Volatile
+        var showing = false
+
+        @Volatile
+        var inst: OverlayService? = null
+
         fun show(c: Context, heard: String = "") {
             val i = Intent(c, OverlayService::class.java)
             if (heard.isNotBlank()) i.putExtra("heard", heard)
-            if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i) else c.startService(i)
+            try {
+                if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i) else c.startService(i)
+            } catch (e: Exception) {
+                // background FGS start denied — answer path degrades, no crash
+                Log.w(TAG, "overlay start declined: ${e.message}")
+            }
         }
     }
 }
