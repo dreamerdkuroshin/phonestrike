@@ -21,6 +21,11 @@
     <uses-permission android:name="android.permission.SEND_SMS" />
     <!-- Auto-start listening after reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Vision: camera capture on voice cue (spec 11) -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Vision: one-shot screen capture via MediaProjection FGS (spec 12) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <queries>
         <intent>
@@ -52,6 +57,21 @@
         <activity
             android:name=".SettingsActivity"
             android:exported="false" />
+
+        <!-- Vision capture (spec 11/12): launched by StrikeApi on a voice cue -->
+        <activity
+            android:name=".CameraActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".ScreenShotActivity"
+            android:exported="false" />
+
+        <service
+            android:name=".ScreenCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
 
         <service
             android:name=".VoiceService"
