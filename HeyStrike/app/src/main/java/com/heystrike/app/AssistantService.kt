@@ -55,10 +55,12 @@ class AssistantService : VoiceInteractionService() {
 
         if (!ModelManager.ready(this)) {
             Log.e(TAG, "Vosk model missing — open the app once to download it")
+            startMicFgs() // notification shows the real reason (voice model missing)
             return
         }
         if (!mic) {
             Log.e(TAG, "microphone permission missing")
+            startMicFgs() // notification shows the real reason (mic permission)
             return
         }
 
@@ -69,7 +71,7 @@ class AssistantService : VoiceInteractionService() {
             Thread {
                 try {
                     Log.i(TAG, "sherpa model download starting")
-                    ModelManager.downloadSherpa(applicationContext) { _, _ -> }
+                    ModelManager.downloadSherpa(applicationContext, { _, _ -> })
                     Log.i(TAG, "sherpa model ready")
                 } catch (e: Exception) {
                     Log.w(TAG, "sherpa download failed: ${e.message}")
@@ -87,6 +89,10 @@ class AssistantService : VoiceInteractionService() {
 
         // Best-effort mic FGS: needed on some builds for background capture;
         // legal from assist-role context, declines gracefully where not.
+        startMicFgs()
+    }
+
+    private fun startMicFgs() {
         try {
             val s = Intent(this, VoiceService::class.java)
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(s) else startService(s)
@@ -100,7 +106,10 @@ class AssistantService : VoiceInteractionService() {
         applicationContext,
         onWake = { main.post { onWakeWord() } },
         onCommand = { text -> onCommandCaptured(text) },
-        onError = { msg -> Log.e(TAG, "gate error: $msg (controller retries)") },
+        onError = { msg ->
+            Log.e(TAG, "gate error: $msg (controller retries)")
+            startMicFgs() // refresh the notification with the gate-error text
+        },
         onPartial = { p -> AssistantSessionService.active?.showListening(p) },
         onInterrupt = { AssistantSessionService.active?.interruptSpeaking() }
     )

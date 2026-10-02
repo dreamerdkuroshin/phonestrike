@@ -24,37 +24,37 @@ class VoiceService : Service() {
     private var wakeLock: android.os.PowerManager.WakeLock? = null
     private var shell = false
 
+    private val stateListener: (StrikeVoiceController.State) -> Unit = { refreshFg() }
+
     override fun onBind(i: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         shell = isAssistantHeld()
-        if (shell) {
-            Log.i(TAG, "shell mode — assistant role active, gate owned by AssistantService")
-            startFg("Hey Strike — system assistant listening")
-        } else {
-            startFg("Hey Strike listening — say the wake word")
-        }
         acquireWakeLock()
+        StrikeVoiceController.addStateListener(stateListener)
+        refreshFg()
 
-        if (shell) return
+        val mic = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!mic || !ModelManager.ready(this)) return // notification already says why
 
-        if (!ModelManager.ready(this)) {
-            startFg("Open Hey Strike app → Download voice model (40MB, once)")
-            return
-        }
-        if (!ModelManager.sherpaReady(this)) {
+        if (!shell && !ModelManager.sherpaReady(this)) {
             // background: streaming command model; first command uses Vosk fallback
             Thread {
                 try {
                     Log.i(TAG, "sherpa model download starting")
-                    ModelManager.downloadSherpa(applicationContext) { _, _ -> }
+                    ModelManager.downloadSherpa(applicationContext, { _, _ -> })
                     Log.i(TAG, "sherpa model ready")
                 } catch (e: Exception) {
                     Log.w(TAG, "sherpa download failed: ${e.message}")
                 }
             }.start()
         }
+        // Starts the gate if nobody owns it. In shell mode the assistant
+        // service normally owns it — a refused start is fine. It is the
+        // fallback for "assistant boot failed / gate died" AND it revives a
+        // dead session (controller revive path).
         val ok = StrikeVoiceController.startWakeWord(
             StrikeVoiceController.OWNER_VOICE,
             applicationContext,
@@ -65,9 +65,29 @@ class VoiceService : Service() {
             onInterrupt = { OverlayService.inst?.interruptAnswer() }
         )
         if (!ok) {
-            Log.i(TAG, "standalone gate refused — engine already active (owner=${StrikeVoiceController.currentOwner()})")
-            startFg("Wake word already active (${StrikeVoiceController.currentOwner()}).")
+            Log.i(TAG, "gate refused — engine active (owner=${StrikeVoiceController.currentOwner()})")
         }
+        refreshFg()
+    }
+
+    /**
+     * The notification tells the TRUTH about why listening is/isn't active —
+     * silent gate death was reported as "service stopped, no response".
+     */
+    private fun refreshFg() {
+        val mic = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        val text = when {
+            !mic -> "Microphone permission missing — open Hey Strike"
+            !ModelManager.ready(this) -> "Voice model missing — open Hey Strike → Download"
+            StrikeVoiceController.lastError != null && !StrikeVoiceController.isRunning() ->
+                "Gate error: ${StrikeVoiceController.lastError} — open app to retry"
+            StrikeVoiceController.isRunning() && shell -> "Hey Strike — system assistant listening"
+            StrikeVoiceController.isRunning() -> "Hey Strike listening — say the wake word"
+            shell -> "Hey Strike — assistant starting…"
+            else -> "Hey Strike — starting…"
+        }
+        startFg(text)
     }
 
     private fun isAssistantHeld(): Boolean {
@@ -105,7 +125,10 @@ class VoiceService : Service() {
         }
     }
 
-    override fun onStartCommand(i: Intent?, f: Int, id: Int): Int = START_STICKY
+    override fun onStartCommand(i: Intent?, f: Int, id: Int): Int {
+        refreshFg() // any (re)start re-evaluates the real gate state
+        return START_STICKY
+    }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         // Glitch guard: swiping the app away must not kill listening; restart it.
@@ -117,6 +140,7 @@ class VoiceService : Service() {
 
     override fun onDestroy() {
         // no-op when another owner holds the gate (ownership check inside)
+        StrikeVoiceController.removeStateListener(stateListener)
         StrikeVoiceController.stopWakeWord(StrikeVoiceController.OWNER_VOICE)
         try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}
         super.onDestroy()

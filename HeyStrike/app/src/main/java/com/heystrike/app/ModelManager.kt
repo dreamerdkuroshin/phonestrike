@@ -20,7 +20,7 @@ object ModelManager {
     fun dir(c: Context): File = File(c.filesDir, "models/small-en")
 
     fun ready(c: Context): Boolean =
-        File(dir(c), "am/final.mdl").exists()
+        File(dir(c), "am/final.mdl").let { it.isFile && it.length() > 0 }
 
     private val downloadLock = java.util.concurrent.locks.ReentrantLock()
 
@@ -46,6 +46,15 @@ object ModelManager {
                     onProgress(done, total)
                 }
             }
+        }
+        // integrity: a truncated zip must never be unpacked into "ready" state
+        if (total > 1 && done != total) {
+            zip.delete()
+            throw RuntimeException("truncated download: $done/$total bytes")
+        }
+        if (done <= 0) {
+            zip.delete()
+            throw RuntimeException("empty download")
         }
         // zip contains top folder vosk-model-small-en-us-0.15/ -> strip it
         ZipInputStream(BufferedInputStream(zip.inputStream())).use { zis ->
@@ -93,7 +102,12 @@ object ModelManager {
     /** Resumable per-file download: HF primary, hf-mirror fallback.
      *  Lock + content-length verify: a truncated file must never be renamed
      *  into place (a corrupt int8 encoder crashes native load on-device). */
-    fun downloadSherpa(c: Context, onProgress: (done: Long, total: Long) -> Unit) = downloadLock.withLock {
+    /**  force=true deletes existing files first (repair a corrupt model). */
+    fun downloadSherpa(
+        c: Context,
+        onProgress: (done: Long, total: Long) -> Unit,
+        force: Boolean = false
+    ) = downloadLock.withLock {
         val out = sherpaDir(c).apply { mkdirs() }
         val bases = listOf(
             "https://huggingface.co/",
@@ -101,6 +115,7 @@ object ModelManager {
         )
         for (name in SHERPA_FILES) {
             val dest = File(out, name)
+            if (force && dest.exists()) dest.delete()
             if (dest.length() > 0) continue
             val part = File(out, "$name.part")
             var ok = false

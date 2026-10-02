@@ -69,12 +69,21 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<Button>(R.id.startBtn).setOnClickListener {
             Prefs.saveServer(this, serverBox.text.toString().trim())
             if (isAssistantHeld()) {
-                note(wakeStatus, "Assistant role active", R.color.strike_ok)
+                // restart the mic service: it re-attempts the gate (revives a
+                // dead session, or starts one if assistant boot failed)
+                try {
+                    val s = Intent(this, VoiceService::class.java)
+                    if (Build.VERSION.SDK_INT >= 26) startForegroundService(s) else startService(s)
+                } catch (_: Exception) {}
+                note(wakeStatus, "Restarting gate…", R.color.strike_text2)
             } else {
                 Prefs.setAlwaysListen(this, true)
                 startService(Intent(this, VoiceService::class.java))
                 note(wakeStatus, "ON — say “Hey Strike”", R.color.strike_ok)
             }
+            // service onCreate runs async — re-read the real state shortly after
+            android.os.Handler(android.os.Looper.getMainLooper())
+                .postDelayed({ refreshStatus() }, 900)
             refreshStatus()
         }
         findViewById<Button>(R.id.talkBtn).setOnClickListener {
@@ -98,32 +107,30 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
         findViewById<Button>(R.id.modelBtn).setOnClickListener {
-            modelProgress.text = "Downloading voice models (~43MB, once)…"
+            modelProgress.text = "Downloading voice models (~43MB)…"
             Thread {
                 try {
-                    if (!ModelManager.ready(this)) {
-                        ModelManager.download(this) { done, total ->
-                            runOnUiThread {
-                                modelProgress.text =
-                                    "Vosk: ${done / 1048576}MB / ${total / 1048576}MB"
-                            }
+                    // always run: tapping again is the repair path for a
+                    // truncated/corrupt model (force re-fetch)
+                    ModelManager.download(this) { done, total ->
+                        runOnUiThread {
+                            modelProgress.text =
+                                "Vosk: ${done / 1048576}MB / ${total / 1048576}MB"
                         }
                     }
-                    if (!ModelManager.sherpaReady(this)) {
-                        ModelManager.downloadSherpa(this) { done, total ->
-                            runOnUiThread {
-                                modelProgress.text =
-                                    "Streaming ASR: ${done / 1048576}MB / ${total / 1048576}MB"
-                            }
+                    ModelManager.downloadSherpa(this, { done, total ->
+                        runOnUiThread {
+                            modelProgress.text =
+                                "Streaming ASR: ${done / 1048576}MB / ${total / 1048576}MB"
                         }
-                    }
+                    }, force = true)
                     runOnUiThread {
                         modelProgress.text = "Voice models ready"
                         refreshStatus()
                     }
                 } catch (e: Exception) {
                     runOnUiThread {
-                        modelProgress.text = "Download failed: ${e.message} — retry"
+                        modelProgress.text = "Download failed: ${e.message} — tap to retry"
                     }
                 }
             }.start()

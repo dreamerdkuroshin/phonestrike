@@ -72,6 +72,11 @@ object StrikeVoiceController {
 
     fun isRunning(): Boolean = synchronized(lock) { gate != null }
 
+    /** Last gate failure (cleared when the gate reports ready again). */
+    @Volatile
+    var lastError: String? = null
+        private set
+
     fun currentOwner(): String? = synchronized(lock) { owner }
 
     fun stateName(): String = state.name
@@ -85,9 +90,19 @@ object StrikeVoiceController {
         onPartial: (text: String) -> Unit = {},
         onInterrupt: () -> Unit = {}
     ): Boolean = synchronized(lock) {
-        if (started || gate != null) {
+        if (gate != null) {
             Log.i(TAG, "startWakeWord($ownerName) ignored — already active (owner=$owner)")
             return false
+        }
+        if (started) {
+            // Dead session (retry budget exhausted, gate=null, started=true):
+            // without this revival every future start is refused forever.
+            Log.w(TAG, "startWakeWord($ownerName) reviving dead session (owner=$owner)")
+            restartRunnable?.let { main.removeCallbacks(it) }
+            restartRunnable = null
+            started = false
+            owner = null
+            retries = 0
         }
         owner = ownerName
         started = true
@@ -222,6 +237,7 @@ object StrikeVoiceController {
             synchronized(lock) {
                 if (!started) return@synchronized
                 retries = 0
+                lastError = null
                 Log.i(TAG, "Vosk ready")
                 Log.i(TAG, "AudioRecord ready")
                 setStateInternal(State.IDLE)
@@ -289,6 +305,7 @@ object StrikeVoiceController {
         synchronized(lock) {
             // The engine self-cleans in its finally block; drop the reference.
             gate = null
+            lastError = msg
             setStateInternal(State.ERROR)
             Log.e(TAG, "wake gate error: $msg")
             cb = onErrorCb
