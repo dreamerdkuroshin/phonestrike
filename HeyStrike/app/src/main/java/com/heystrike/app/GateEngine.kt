@@ -40,6 +40,7 @@ import kotlin.math.max
 class GateEngine(
     private val modelDir: String,
     private val sherpaDir: String?,
+    private val wakeWords: List<String> = listOf("hey strike"),
     private val assets: android.content.res.AssetManager? = null,
     private val onReady: () -> Unit = {},
     private val onWake: () -> Unit,
@@ -68,6 +69,10 @@ class GateEngine(
 
     // ~0.9s of 16kHz 16-bit mono = 28800 bytes of rolling audio (wake tail replay)
     private val ring = Ring(28800)
+
+    /** Vosk constrained grammar from the active model's wake words. */
+    private fun wakeGrammar(): String =
+        "[" + wakeWords.joinToString(",") { "\"$it\"" } + "]"
 
     /** Capture ONE command from the live stream (same AudioRecord, never a second mic). */
     fun requestCommand() { commandRequested = true }
@@ -117,7 +122,7 @@ class GateEngine(
     private fun loop() {
         try {
             model = Model(modelDir)
-            gate = Recognizer(model, 16000f, "[\"hey strike\"]")
+            gate = Recognizer(model, 16000f, wakeGrammar())
             val min = AudioRecord.getMinBufferSize(
                 16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
             ).coerceAtLeast(8192)
@@ -160,7 +165,9 @@ class GateEngine(
                 val partial = try {
                     JSONObject(rec.partialResult).optString("partial", "")
                 } catch (_: Exception) { "" }.lowercase()
-                val wake = "hey strike" in partial || "hey str" in partial
+                // wake match on the NORMALIZED partial: Hindi-model renders
+                // "hey strike" as Devanagari ("air/eyar strike" seen live)
+                val wake = WakeMatcher.isWake(Transliterate.normalize(partial))
 
                 // ---- barge-in: user speaks while Strike is answering ----
                 val speakingNow =
@@ -196,7 +203,7 @@ class GateEngine(
                     cooldownUntil = System.currentTimeMillis() + 4000
                     try { gate?.close() } catch (_: Exception) {}
                     val m = model ?: break
-                    gate = Recognizer(m, 16000f, "[\"hey strike\"]")
+                    gate = Recognizer(m, 16000f, wakeGrammar())
                     continue
                 }
 
@@ -213,7 +220,7 @@ class GateEngine(
                     // fresh gate after command (recognizer state consumed)
                     try { gate?.close() } catch (_: Exception) {}
                     val m = model ?: break
-                    gate = Recognizer(m, 16000f, "[\"hey strike\"]")
+                    gate = Recognizer(m, 16000f, wakeGrammar())
                 }
             }
         } catch (t: Throwable) {

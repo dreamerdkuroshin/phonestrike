@@ -34,14 +34,26 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
             return handle(fixed, record = false)
         }
         if (record) ConversationManager.recordUser(ctx, text)
-        val t = text.lowercase().trim()
-        // HITL confirmation release ("yes"/"no") — before every other route
+        // normalize FIRST: Devanagari/Gujarati ASR becomes Latin, so every
+        // matcher below (wake, verbs, contacts, apps) stays monolingual.
+        // Raw text is still what gets recorded and displayed.
+        val t = WakeMatcher.stripWake(Transliterate.normalize(text))
+        val hindi = Prefs.voiceLang(ctx) == "hi" ||
+            text.any { it.code in 0x0900..0x0AFF }
+        // HITL confirmation release ("yes"/"no"/"haan") — before every other route
         PendingConfirm.consume(t, ctx)?.let { return it }
         // runtime emergency stop (spec 58): never depends on the LLM obeying
         if (t in stopWords) {
             StrikeAgent.stopRequested = true
             PendingConfirm.clear(ctx)
             return "Stopped."
+        }
+        // clarification-task follow-up ("haan" / slot fills) — before contact routes
+        PendingTask.consume(t, hindi)?.let { o ->
+            return when (o) {
+                is PendingTask.Outcome.Say -> o.text
+                is PendingTask.Outcome.Run -> runPlanner(o.goal)
+            }
         }
         // pending ambiguity follow-up: answer with just the app name
         AppResolver.pick(ctx, t)?.let { pkg ->
@@ -64,6 +76,10 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         // "take a screenshot and read it" isn't hijacked by " and " routing
         if (isCameraCue(t)) return Vision.askCamera(ctx, text)
         if (isScreenVisionCue(t)) return Vision.askScreen(ctx, text)
+        // multilingual message/open compounds: structured intent with known
+        // slots, or ONE clarification question — never a blind guess, and
+        // never silence when the transcript lost a word
+        routeIntent(t, hindi)?.let { return it }
         // P4: multi-step / contact tasks go to the planner (observe→act→verify),
         // not the direct parser. e.g. "open whatsapp and call rahul".
         if (t.startsWith("call ") || " and " in t || " then " in t || t.startsWith("tap ")) {
@@ -197,8 +213,10 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         // fresh command: a stale Stop from a previous turn must not kill this
         // stream (askServerStream polls stopRequested while reading SSE)
         StrikeAgent.stopRequested = false
-        val t = text.lowercase().trim()
-        // HITL confirmation release ("yes"/"no") — before every other route
+        val t = WakeMatcher.stripWake(Transliterate.normalize(text))
+        val hindi = Prefs.voiceLang(ctx) == "hi" ||
+            text.any { it.code in 0x0900..0x0AFF }
+        // HITL confirmation release ("yes"/"no"/"haan") — before every other route
         PendingConfirm.consume(t, ctx)?.let { ans ->
             onToken(ans)
             onDone()
@@ -209,6 +227,15 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
             StrikeAgent.stopRequested = true
             PendingConfirm.clear(ctx)
             onToken("Stopped.")
+            onDone()
+            return
+        }
+        // clarification-task follow-up — before contact routes
+        PendingTask.consume(t, hindi)?.let { o ->
+            when (o) {
+                is PendingTask.Outcome.Say -> onToken(o.text)
+                is PendingTask.Outcome.Run -> onToken(runPlanner(o.goal))
+            }
             onDone()
             return
         }
@@ -245,6 +272,13 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         }
         if (isScreenVisionCue(t)) {
             onToken(Vision.askScreen(ctx, text))
+            onDone()
+            return
+        }
+        // multilingual message/open compounds: structured intent or ONE
+        // clarification — never a blind guess, never silence
+        routeIntent(t, hindi)?.let { ans ->
+            onToken(ans)
             onDone()
             return
         }
@@ -365,8 +399,51 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         else { ctx.startActivity(i); true }
     } catch (_: Exception) { false }
 
-    private fun runPlanner(text: String): String {
-        return try {
+        /**
+     * Multilingual intent router (shared by handle/handleStream).
+     * String = answered here; null = continue normal routing.
+     */
+    private fun routeIntent(t: String, hindi: Boolean): String? {
+        val intent = IntentParser.parseMessage(t) ?: return null
+        if (intent.action == "open") {
+            if (intent.app != null) {
+                val label = intent.app.replaceFirstChar { it.uppercase() }
+                return if (launch(appPkg(intent.app))) "$label is open."
+                else "I couldn't open $label."
+            }
+            // app lost in ASR ("open aur beru"): probe tokens as a contact —
+            // a hit means a message compound, so clarify instead of failing
+            val probe = t.split(" ").map { it.trim() }.filter { it.isNotBlank() }
+                .firstOrNull { w ->
+                    w !in listOf("open", "launch", "start", "khol", "kholo", "kholna") &&
+                        w !in listOf("and", "aur", "ane", "then")
+                }
+            val hit = probe?.let { ContactResolver.resolve(ctx, it) }
+            if (hit != null && hit.error == null && hit.name != null) {
+                val pend = IntentParser.MsgIntent("message", null, hit.name, null)
+                PendingTask.set(pend)
+                return IntentParser.clarify(pend, hindi)
+            }
+            return null
+        }
+        // message intent: recipient-vs-text ambiguity ("message hello" sends
+        // "hello" to someone — it is not a contact named Hello)
+        var msg = intent
+        val rcpt = msg.recipient
+        if (msg.message == null && rcpt != null) {
+            val r = ContactResolver.resolve(ctx, rcpt)
+            if (r.error == null && r.name == null && r.candidates.isEmpty()) {
+                msg = msg.copy(recipient = null, message = rcpt)
+            }
+        }
+        if (!msg.complete) {
+            PendingTask.set(msg)
+            return IntentParser.clarify(msg, hindi)
+        }
+        return runPlanner(t)
+    }
+
+    private fun runPlanner(text: String): String {        return try {
             ConversationManager.setTask(ctx, text)
             StrikeAgent.stopRequested = false // fresh run clears a stale Stop press
             StrikeAgent(ctx).run(text)

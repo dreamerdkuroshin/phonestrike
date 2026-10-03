@@ -249,6 +249,10 @@ object StrikeVoiceController {
     private fun newGate() = GateEngine(
         modelDir = modelPath,
         sherpaDir = sherpaPath,
+        // Hindi model decodes the English wake as Devanagari ("हे स्ट्राइक",
+        // seen verbatim on-device) — constrain to the native phrase there.
+        wakeWords = if (modelPath.contains("small-hi")) listOf("हे स्ट्राइक")
+        else listOf("hey strike"),
         assets = appCtx?.assets,
         onReady = {
             synchronized(lock) {

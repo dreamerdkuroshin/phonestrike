@@ -236,6 +236,8 @@ class SettingsActivity : AppCompatActivity() {
                 val buf = ByteArray(4096)
                 val rec = ByteArrayOutputStream()
                 var peak = 0.0
+                var frames = 0
+                var speechFrames = 0
                 val t0 = System.currentTimeMillis()
                 while (System.currentTimeMillis() - t0 < 3000) {
                     val n = ar.read(buf, 0, buf.size)
@@ -251,12 +253,16 @@ class SettingsActivity : AppCompatActivity() {
                             c++
                             i += 2
                         }
-                        peak = max(peak, sqrt(sum / max(c, 1)))
+                        val r = sqrt(sum / max(c, 1))
+                        peak = max(peak, r)
+                        frames++
+                        if (r > 0.0056) speechFrames++ // -45 dB voice floor
                     }
                 }
                 try { ar.stop() } catch (_: Exception) {}
                 ar.release()
                 val db = 20 * log10(max(peak, 1e-4))
+                val speechPct = if (frames > 0) speechFrames * 100 / frames else 0
                 val dir = if (Prefs.voiceLang(this) == "hi") ModelManager.hiDir(this)
                 else ModelManager.dir(this)
                 val heard = try {
@@ -276,8 +282,16 @@ class SettingsActivity : AppCompatActivity() {
                 } catch (e: Exception) {
                     "model error: ${e.message}"
                 }
-                val micVerdict = if (db < -45) "SILENCE — mic blocked/held?" else "sound OK"
-                "Mic peak %.0f dB (%s) · heard: “%s”".format(db, micVerdict, heard)
+                // staged verdict: NEVER one generic line — each stage named
+                val micStage = if (db < -45) "MIC: SILENCE (-inf dB, mic blocked/held?)"
+                else "MIC: OK (peak %.0f dB)".format(db)
+                val vadStage = if (db < -45) "VAD: n/a (no audio)"
+                else "VAD: $speechPct% speech frames" +
+                    if (speechPct < 5) " (NO SPEECH — spoke too late/soft?)" else " (OK)"
+                val asrStage = if (heard.startsWith("model error")) "ASR: ERROR ($heard)"
+                else if (heard == "(nothing decoded)") "ASR: EMPTY (audio reached model, no words out)"
+                else "ASR: OK (heard “$heard”)"
+                "$micStage\n$vadStage\n$asrStage"
             } catch (e: Exception) {
                 "FAILED: ${e.message}"
             }

@@ -46,10 +46,11 @@ object PendingConfirm {
         return when (s) {
             "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "confirm",
             "do it", "go ahead", "proceed", "send", "send it", "yes please",
-            "confirm it", "yes do it" -> Answer.YES
+            "confirm it", "yes do it", "haan", "haa", "han", "ji",
+            "theek hai", "kar do", "bhej do" -> Answer.YES
             "no", "nope", "cancel", "stop", "stop it", "don't", "dont",
             "never mind", "nevermind", "abort", "don't send", "dont send",
-            "no dont" -> Answer.NO
+            "no dont", "nahi", "nahin", "na", "mat karo", "mat kar" -> Answer.NO
             else -> Answer.OTHER
         }
     }
