@@ -1,0 +1,19 @@
+# Gujarati ASR regression phrases — coverage target, NOT a passing set.
+# No native Gujarati model exists upstream yet (AsrRouter.GU falls back to
+# English). When a model lands, each line must decode to its intent.
+# Format: <tag> | <phrase> | <expected intent>
+
+pure | વોટ્સએપ ખોલો | open whatsapp
+pure | બેરુ ને મેસેજ કરો | message beru
+pure | હવામાન કેવું છે | weather query
+pure | સમય શું થયો | time query
+mixed-gu-en | WhatsApp ખોલો અને Beru ને message કરો | compound message task
+mixed-gu-en | YouTube પર Python સર્ચ કરો | search task
+mixed-gu-hi | સમય બતાવો અને-koi message ભેજો | compound (gu+hi)
+names | Beru, Ahmedabad, Surat | entity transcription
+numbers | એકસો તેવીસ, ૧૨૩, 123 | number transcription
+commands | બંધ કરો | stop
+commands | ફરીથી બોલો | repeat
+slang | informal/slang preserved verbatim, never masked | faithful transcript
+noise | same as pure, at low mic level | robust decode
+fast | rapid-fire compound command | endpointing holds

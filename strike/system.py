@@ -76,6 +76,29 @@ def save_conversations(data):
         json.dump(data, f, indent=2)
 
 
+def purge_history(scope="conversations"):
+    """Delete history. Scope 'conversations' (default) clears the server
+    conversation store; 'all' additionally truncates crash.log (stacks can
+    contain spoken text). Uploads are NEVER touched. Returns what was removed."""
+    removed = []
+    try:
+        hf = config.history_file()
+        if os.path.exists(hf):
+            os.remove(hf)
+            removed.append("conversations")
+    except Exception:
+        pass
+    if scope == "all":
+        try:
+            cp = os.path.join(config.WORKSPACE_DIR, "agent", "crash.log")
+            if os.path.exists(cp):
+                open(cp, "w").close()
+                removed.append("crash.log")
+        except Exception:
+            pass
+    return removed
+
+
 def append_crash(app, thread, stack):
     stack = str(stack or '')[:8000]
     if not stack.strip():

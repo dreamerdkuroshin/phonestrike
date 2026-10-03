@@ -16,6 +16,7 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 from flask_cors import CORS
 
 from strike import config, device, intents, jarvis, llm, media, system
+from strike import executor, provider, research
 
 app = Flask(__name__)
 CORS(app)
@@ -285,6 +286,73 @@ def api_crashlog():
 @app.route('/api/health', methods=['GET'])
 def api_health():
     return jsonify(system.health_dict())
+
+
+@app.route('/api/research', methods=['POST'])
+def api_research():
+    """Research agent: {question} -> claims + contradictions + synthesis."""
+    data = request.json or {}
+    q = str(data.get('question', '')).strip()[:500]
+    if not q:
+        return jsonify({"error": "question required"}), 400
+    steps = []
+
+    def progress(s):
+        steps.append(s)
+    try:
+        out = research.research(q, progress=progress)
+        out["steps"] = steps
+        return jsonify(out)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/tasks', methods=['POST'])
+def api_tasks_create():
+    """Autonomous executor: {repo, build?, fix?} -> {task_id}."""
+    data = request.json or {}
+    repo = str(data.get('repo', '')).strip()[:500]
+    if not repo:
+        return jsonify({"error": "repo required"}), 400
+    tid = executor.create_task(repo=repo, build=str(data.get('build', 'auto'))[:20],
+                               fix=bool(data.get('fix', True)))
+    return jsonify({"task_id": tid})
+
+
+@app.route('/api/tasks/<tid>', methods=['GET'])
+def api_tasks_get(tid):
+    t = executor.get_task(tid)
+    if not t:
+        return jsonify({"error": "unknown task"}), 404
+    return jsonify(t)
+
+
+@app.route('/api/tasks/<tid>/cancel', methods=['POST'])
+def api_tasks_cancel(tid):
+    if not executor.cancel_task(tid):
+        return jsonify({"error": "unknown or finished task"}), 404
+    return jsonify({"status": "cancelled"})
+
+
+@app.route('/api/history/purge', methods=['POST'])
+def api_history_purge():
+    """Delete history. {scope: conversations|all}. Uploads never touched."""
+    data = request.json or {}
+    removed = system.purge_history(str(data.get('scope', 'conversations'))[:20])
+    return jsonify({"removed": removed})
+
+
+@app.route('/api/provider/rotate', methods=['POST'])
+def api_provider_rotate():
+    """Rotate provider credentials. Localhost only (same rule as /config).
+    {api_key?, base_url?, model?} -> validation + test result, never the key."""
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        return jsonify({"error": "provider rotation is local-only"}), 403
+    data = request.json or {}
+    res, err = provider.rotate(data.get('api_key'), data.get('base_url'), data.get('model'))
+    if err:
+        return jsonify({"error": err}), 502
+    return jsonify(res)
 
 
 @app.route('/config', methods=['GET'])
