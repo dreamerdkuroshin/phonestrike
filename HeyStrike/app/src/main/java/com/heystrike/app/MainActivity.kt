@@ -131,6 +131,8 @@ class MainActivity : AppCompatActivity() {
         refreshConnectionDot()
         requestMissingPermissions()
         Nav.wire(this, findViewById<BottomNavigationView>(R.id.bottomNav), R.id.nav_home)
+        // resend a crash that couldn't reach the server when it happened
+        Thread { CrashLog.resendLast(applicationContext) }.start()
     }
 
     // First run: mic permission was previously only requestable from

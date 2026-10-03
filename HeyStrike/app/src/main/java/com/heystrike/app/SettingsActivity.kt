@@ -40,6 +40,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var a11yStatus: TextView
     private lateinit var psStatus: TextView
     private lateinit var llmStatus: TextView
+    private lateinit var crashStatus: TextView
     private lateinit var modelStatus: TextView
     private lateinit var modelProgress: TextView
     private lateinit var serverBox: EditText
@@ -60,6 +61,7 @@ class SettingsActivity : AppCompatActivity() {
         psStatus = findViewById(R.id.psStatus)
         llmStatus = findViewById(R.id.llmStatus)
         modelStatus = findViewById(R.id.modelStatus)
+        crashStatus = findViewById(R.id.crashStatus)
         modelProgress = findViewById(R.id.modelProgress)
         serverBox = findViewById(R.id.serverBox)
 
@@ -491,9 +493,17 @@ class SettingsActivity : AppCompatActivity() {
         setStatus(overlayStatus, Settings.canDrawOverlays(this))
         setStatus(a11yStatus, a11yOn())
 
-        val have = ModelManager.ready(this) && ModelManager.sherpaReady(this)
+        val have = ModelManager.readyFor(this, Prefs.voiceLang(this))
         modelStatus.text = if (have) "Ready" else "Missing"
         modelStatus.setTextColor(getColor(if (have) R.color.strike_ok else R.color.strike_err))
+
+        CrashLog.lastCrash(this)?.let {
+            crashStatus.text = it
+            crashStatus.setTextColor(getColor(R.color.strike_err))
+        } ?: run {
+            crashStatus.text = "none"
+            crashStatus.setTextColor(getColor(R.color.strike_text2))
+        }
 
         Thread {
             val ps = ping(Prefs.server(this))

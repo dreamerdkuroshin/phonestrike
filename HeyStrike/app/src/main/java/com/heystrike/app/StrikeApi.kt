@@ -407,8 +407,11 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         }
         if (r.name == null) {
             if (verb == "call") return null // no contact match: let planner/LLM try
-            return "I couldn't find a contact named \"$name\". " +
-                "Add them to Contacts or say their exact name."
+            // No phone-book contact: Beru may be a WhatsApp-only chat (or a
+            // differently-spelled name) — let the planner find them by UI
+            // search instead of dead-ending here. The planner verifies and
+            // reports honestly if nobody matches.
+            return null
         }
         if (verb == "call" && "whatsapp" !in raw.lowercase() && "video" !in raw.lowercase()) {
             val num = r.phone
