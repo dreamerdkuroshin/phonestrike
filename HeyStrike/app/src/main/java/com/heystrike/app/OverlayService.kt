@@ -292,38 +292,51 @@ class SiriOrbView(c: Context, onTap: () -> Unit) : FrameLayout(c) {
     }
     private val glow = View(c).apply { alpha = 0.30f }
     private val orb = View(c).apply { alpha = 0.98f }
+    private var pulseX: android.animation.ObjectAnimator? = null
+    private var pulseY: android.animation.ObjectAnimator? = null
 
     init {
         // ponytail: transparent, not the old 0xCC000000 full-screen black
         setBackgroundColor(0x00000000)
         val d = resources.displayMetrics.density
-        val glowPx = (250 * d).toInt()
-        val orbPx = (170 * d).toInt()
-        addView(glow, LayoutParams(glowPx, glowPx, Gravity.CENTER))
-        addView(orb, LayoutParams(orbPx, orbPx, Gravity.CENTER))
-        val lp = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER)
-        lp.topMargin = (orbPx / 2 + (28 * d)).toInt()
+        // Gemini-style: medium orb docked near the bottom, halo behind it
+        val orbPx = (150 * d).toInt()
+        val glowPx = (230 * d).toInt()
+        val baseMargin = (100 * d).toInt()
+        val glowLp = LayoutParams(glowPx, glowPx, Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM)
+        glowLp.bottomMargin = baseMargin - (glowPx - orbPx) / 2
+        addView(glow, glowLp)
+        val orbLp = LayoutParams(orbPx, orbPx, Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM)
+        orbLp.bottomMargin = baseMargin
+        addView(orb, orbLp)
+        val lp = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT,
+            Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM)
+        lp.bottomMargin = baseMargin + orbPx + (12 * d).toInt()
         addView(label, lp)
         setOnClickListener { onTap() }
         applyMode(MODE_LISTENING)
-        // looping breathe (the old pulse ran once and stopped)
-        val sx = android.animation.ObjectAnimator.ofFloat(orb, "scaleX", 1f, 1.1f).apply {
-            duration = 900
-            repeatCount = android.animation.ValueAnimator.INFINITE
-            repeatMode = android.animation.ValueAnimator.REVERSE
-        }
-        val sy = android.animation.ObjectAnimator.ofFloat(orb, "scaleY", 1f, 1.1f).apply {
-            duration = 900
-            repeatCount = android.animation.ValueAnimator.INFINITE
-            repeatMode = android.animation.ValueAnimator.REVERSE
-        }
-        sx.start()
-        sy.start()
     }
 
     fun setText(s: String) { post { label.text = s } }
 
     fun setMode(mode: Int) { post { applyMode(mode) } }
+
+    private fun startPulse(speedMs: Long) {
+        pulseX?.cancel()
+        pulseY?.cancel()
+        pulseX = android.animation.ObjectAnimator.ofFloat(orb, "scaleX", 1f, 1.1f).apply {
+            duration = speedMs
+            repeatCount = android.animation.ValueAnimator.INFINITE
+            repeatMode = android.animation.ValueAnimator.REVERSE
+        }
+        pulseY = android.animation.ObjectAnimator.ofFloat(orb, "scaleY", 1f, 1.1f).apply {
+            duration = speedMs
+            repeatCount = android.animation.ValueAnimator.INFINITE
+            repeatMode = android.animation.ValueAnimator.REVERSE
+        }
+        pulseX?.start()
+        pulseY?.start()
+    }
 
     private fun applyMode(mode: Int) {
         // radial: light center -> brand -> deep edge; halo = brand
@@ -337,13 +350,19 @@ class SiriOrbView(c: Context, onTap: () -> Unit) : FrameLayout(c) {
             shape = android.graphics.drawable.GradientDrawable.OVAL
             colors = core
             gradientType = android.graphics.drawable.GradientDrawable.RADIAL_GRADIENT
-            gradientRadius = 85 * d
+            gradientRadius = 75 * d
         }
         glow.background = android.graphics.drawable.GradientDrawable().apply {
             shape = android.graphics.drawable.GradientDrawable.OVAL
             colors = intArrayOf(core[1], 0x00000000)
             gradientType = android.graphics.drawable.GradientDrawable.RADIAL_GRADIENT
-            gradientRadius = 125 * d
+            gradientRadius = 115 * d
         }
+        // pulse follows the state: idle breathe, busy shimmer
+        startPulse(when (mode) {
+            MODE_THINKING -> 600L
+            MODE_SPEAKING -> 450L
+            else -> 900L
+        })
     }
 }

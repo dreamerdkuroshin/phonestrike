@@ -78,6 +78,24 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<Button>(R.id.assistantBtn).setOnClickListener { requestAssistantRole() }
         findViewById<Button>(R.id.startBtn).setOnClickListener {
             Prefs.saveServer(this, serverBox.text.toString().trim())
+            // toggle: running -> stop the gate (mic off). In assistant-role
+            // mode the OS owns the mic — stopping our service can't silence
+            // it, so say so instead of pretending.
+            if (StrikeVoiceController.isRunning()) {
+                if (isAssistantHeld()) {
+                    Toast.makeText(this,
+                        "System-assistant role holds the mic — unset the role to silence fully",
+                        Toast.LENGTH_LONG).show()
+                } else {
+                    try { stopService(Intent(this, VoiceService::class.java)) } catch (_: Exception) {}
+                }
+                Prefs.setAlwaysListen(this, false)
+                note(wakeStatus, "OFF", R.color.strike_text2)
+                android.os.Handler(android.os.Looper.getMainLooper())
+                    .postDelayed({ refreshStatus() }, 900)
+                refreshStatus()
+                return@setOnClickListener
+            }
             // Start must never silently no-op: mic and the language's model
             // are preconditions, so handle them HERE with guidance.
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
@@ -404,6 +422,7 @@ class SettingsActivity : AppCompatActivity() {
         } else {
             note(wakeStatus, why, R.color.strike_err)
         }
+        findViewById<Button>(R.id.startBtn).text = if (running) "Stop" else "Start"
 
         setStatus(
             micStatus,
