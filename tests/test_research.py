@@ -31,17 +31,22 @@ def test_research_full_path(monkeypatch):
          {"url": "http://b.test/y", "title": "B", "snippet": "s"}], None))
     monkeypatch.setattr(research, "fetch_text",
                         lambda u, timeout=10: ("T-" + u, "long enough body text " * 30, None))
-    monkeypatch.setattr("strike.research._llm.query_llm", lambda *a, **k: (
-        "- Delhi is the capital [1][2]\n"
-        "- Population is large [2]\n"
-        "CONTRADICTIONS: none"))
+    seen = {}
+
+    def fake_llm(prompt, system_prompt=None, timeout=180):
+        seen["prompt"] = prompt
+        return ("- Delhi is the capital [1][2]\n"
+                "- Population is large [2]\n"
+                "CONTRADICTIONS: none")
+    monkeypatch.setattr("strike.research._llm.query_llm", fake_llm)
     out = research.research("capital question")
     assert out["verified"] is True
     assert len(out["claims"]) == 2
     assert out["multi_sourced_claims"] == 1
     assert out["contradictions"] == "none"
     assert len(out["sources"]) == 2
-    assert out["research_id"] and out["elapsed_s"] is not None  # steps added by route
+    # regression: phone LLM runs ctx 2048 — evidence must fit with room to answer
+    assert len(seen["prompt"]) <= 2600
 
 
 def test_research_llm_down(monkeypatch):

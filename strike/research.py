@@ -111,8 +111,10 @@ def research(question, progress=None):
                               "an answer. This is not a verified fact."),
                 "verified": False, "elapsed_s": round(time.time() - started, 1)}
 
-    numbered = [f"[{i + 1}] {d['title']} ({_host(d['url'])})\n{d['text'][:2500]}"
+    numbered = [f"[{i + 1}] {d['title']} ({_host(d['url'])})\n{d['text'][:350]}"
                 for i, d in enumerate(docs)]
+    # ponytail: phone LLM runs ctx 2048 — evidence budget ~2k chars total so
+    # the prompt fits with room to generate (4×2500 blew past it live).
     prompt = (
         "Answer the user question using ONLY the sources below. "
         "Output: 1) 3-8 bullet claims, each ending with the source number(s) "
