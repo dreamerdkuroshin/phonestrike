@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.speech.tts.TextToSpeech
+import android.util.Log
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URLEncoder
@@ -56,6 +57,14 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
                 is PendingTask.Outcome.Say -> o.text
                 is PendingTask.Outcome.Run -> runPlanner(o.goal)
             }
+        }
+        // wake-only / blank turn ("hey strike" with no command): do NOT run
+        // the planner or LLM on it — invite continuation instead. This is the
+        // #1 false turn on-device (wake decoded, command lost).
+        if (t.isBlank() || (hadWake && WakeMatcher.stripWake(t).isBlank())) {
+            Log.i(StrikeVoiceController.TAG, "turn wake-only/blank — inviting continuation")
+            return if (hindi) "Ji, sun raha hoon — aage bolo?"
+            else "Yes? I'm listening — go ahead."
         }
         // pending ambiguity follow-up: answer with just the app name
         AppResolver.pick(ctx, t)?.let { pkg ->
@@ -240,6 +249,14 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
                 is PendingTask.Outcome.Say -> onToken(o.text)
                 is PendingTask.Outcome.Run -> onToken(runPlanner(o.goal))
             }
+            onDone()
+            return
+        }
+        // wake-only / blank turn: invite continuation, never run planner/LLM
+        if (t.isBlank() || (hadWake && WakeMatcher.stripWake(t).isBlank())) {
+            Log.i(StrikeVoiceController.TAG, "turn wake-only/blank — inviting continuation")
+            onToken(if (hindi) "Ji, sun raha hoon — aage bolo?"
+            else "Yes? I'm listening — go ahead.")
             onDone()
             return
         }
@@ -441,6 +458,7 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
             // keyword hit, recover via LLM or ask with the transcript shown —
             // never silent, never a hallucinated chat answer to a command
             if (!hadWake && !IntentParser.fuzzyHit(t)) return null
+            Log.i(StrikeVoiceController.TAG, "intent unparsed (hadWake=$hadWake): \"$t\" — recovering")
             return recoverOrClarify(t, raw, hindi)
         }
         if (intent.action == "open") {
@@ -482,8 +500,13 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         }
         if (!msg.complete) {
             PendingTask.set(msg)
-            return IntentParser.clarify(msg, hindi)
+            val q = IntentParser.clarify(msg, hindi)
+            Log.i(StrikeVoiceController.TAG,
+                "intent incomplete (${msg.missing()}): \"$t\" — clarifying")
+            return q
         }
+        Log.i(StrikeVoiceController.TAG,
+            "intent complete (${msg.action} app=${msg.app} to=${msg.recipient}): \"$t\"")
         return runPlanner(t)
     }
 

@@ -344,7 +344,11 @@ class SettingsActivity : AppCompatActivity() {
                     if (speechPct < 5) " (NO SPEECH — spoke too late/soft?)" else " (OK)"
                 val asrStage = if (heard.startsWith("model error")) "ASR: ERROR ($heard)"
                 else if (heard == "(nothing decoded)") "ASR: EMPTY (audio reached model, no words out)"
-                else "ASR: OK (heard “$heard”)"
+                else {
+                    val wakeOnly = WakeMatcher.stripWake(Transliterate.normalize(heard)).isBlank()
+                    if (wakeOnly) "ASR: OK but WAKE-ONLY (“$heard” — no command spoken)"
+                    else "ASR: OK (heard “$heard”)"
+                }
                 "$micStage\n$vadStage\n$asrStage"
             } catch (e: Exception) {
                 "FAILED: ${e.message}"

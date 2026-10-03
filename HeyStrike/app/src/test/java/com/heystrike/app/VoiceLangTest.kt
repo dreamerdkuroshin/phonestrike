@@ -146,6 +146,29 @@ class VoiceLangTest {
     }
 
     @Test
+    fun intentTusharSet() {
+        // spec corpus: recipient + message extraction across variants
+        fun msg(text: String): IntentParser.MsgIntent {
+            val t = Transliterate.normalize(text)
+            return IntentParser.parseMessage(WakeMatcher.stripWake(t))!!
+        }
+        var i = msg("tushar ko mesej karo ki hi")
+        assertEquals("tushar", i.recipient)
+        assertEquals("hi", i.message)
+        i = msg("Tushar ko message karo ki hi")
+        assertEquals("tushar", i.recipient)
+        assertEquals("hi", i.message)
+        i = msg("tushar ko whatsapp par hi bhejo")
+        assertEquals("whatsapp", i.app)
+        assertEquals("tushar", i.recipient)
+        assertEquals("hi", i.message)
+        assertTrue(i.complete)
+        // wake-only is NEVER a command (negative case)
+        assertNull(IntentParser.parseMessage(WakeMatcher.stripWake(
+            Transliterate.normalize("एयर स्ट्राइक"))))
+    }
+
+    @Test
     fun confirmHindi() {        assertEquals(PendingConfirm.Answer.YES, PendingConfirm.classify("haan"))
         assertEquals(PendingConfirm.Answer.YES, PendingConfirm.classify("theek hai"))
         assertEquals(PendingConfirm.Answer.NO, PendingConfirm.classify("nahi"))

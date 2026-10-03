@@ -343,6 +343,7 @@ class GateEngine(
                     return true
                 }
                 if (fin.isEmpty()) return false // decode dropped it — Vosk replays the tail
+                Log.i(StrikeVoiceController.TAG, "command final (sherpa): \"$fin\"")
                 onCommand(fin)
                 true
             } finally {
@@ -501,7 +502,9 @@ class GateEngine(
             StrikeVoiceController.noteFinalized()
             val fin = textOf(cmd.finalResult)
             if (fin.isNotEmpty() && fin != segs.lastOrNull()) segs.add(fin)
-            onCommand(segs.joinToString(" ").trim())
+            val joined = segs.joinToString(" ").trim()
+            Log.i(StrikeVoiceController.TAG, "command final (vosk): \"$joined\"")
+            onCommand(joined)
         } catch (e: Exception) {
             Log.e(StrikeVoiceController.TAG, "command failed", e)
             onCommand("")

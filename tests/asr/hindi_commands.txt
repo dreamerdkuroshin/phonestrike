@@ -1,0 +1,23 @@
+# Hindi ASR regression corpus — parser-level expectations (romanized forms
+# in VoiceLangTest). Audio decoding itself needs the F23 + mic self-test.
+# Format: <tag> | <phrase> | <expected>
+# Negative case first: wake-only must NEVER execute.
+
+negative | एयर स्ट्राइक | wake-only -> continue-prompt, no intent, no execution
+messaging | तुषार को मैसेज करो कि hi | SEND_MESSAGE recipient=tushar message=hi (app asked)
+messaging | तुषार को मैसेज भेजो hi | SEND_MESSAGE recipient=tushar message=hi
+messaging | तुषार को एक मैसेज करो hi | SEND_MESSAGE recipient=tushar message=hi
+messaging | तुषार को बोलना hi | SEND_MESSAGE recipient=tushar message=hi
+messaging | तुषार को WhatsApp पर hi भेज दो | SEND_MESSAGE app=whatsapp recipient=tushar message=hi
+messaging | तुषार को मैसेज कर दो कि hi | SEND_MESSAGE recipient=tushar message=hi
+messaging | तुषार को एक मैसेज भेज दो, hi | SEND_MESSAGE recipient=tushar message=hi
+mixed | तुषार को message करो कि hi | SEND_MESSAGE recipient=tushar message=hi
+mixed | तुषार को WhatsApp पर message भेजो hi | SEND_MESSAGE app=whatsapp recipient=tushar message=hi
+mixed-latin | Tushar ko message karo ki hi | SEND_MESSAGE recipient=tushar message=hi
+mixed-latin | Tushar ko WhatsApp pe hi bhej do | SEND_MESSAGE app=whatsapp recipient=tushar message=hi
+apps | WhatsApp खोलो | open whatsapp
+apps | YouTube खोलो | open youtube
+apps | Chrome खोलो | open chrome
+wake-hi | Hey Strike, तुषार को message करो कि hi | wake + SEND_MESSAGE recipient=tushar
+wake-hi | हे स्ट्राइक तुषार को मैसेज करो कि hi | wake + SEND_MESSAGE recipient=tushar
+wake-hi-asr | एयर स्ट्राइक तुषार को मैसेज करो कि hi | wake-variant + SEND_MESSAGE recipient=tushar

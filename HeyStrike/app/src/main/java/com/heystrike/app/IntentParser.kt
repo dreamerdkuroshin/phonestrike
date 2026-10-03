@@ -41,10 +41,10 @@ object IntentParser {
         "message", "msg", "maisej", "mesej", "mesij", "send", "text",
         "bhej", "bhejo", "bhejna", "likh", "likho"
     )
-    private val AND_WORDS = listOf("and", "aur", "ane", "then", "tatha", "tato")
+    private val AND_WORDS = listOf("and", "aur", "ane", "then", "tatha", "tato", "ki", "ke")
     private val FILLER = setOf(
         "ko", "ke", "ne", "to", "please", "kripya", "kro", "karo", "kar",
-        "the", "a", "an", "me", "mein", "par", "se"
+        "the", "a", "an", "me", "mein", "par", "pe", "per", "se", "ki", "ke"
     )
     // Gujarati/Hindi ergative glued to names (beru+ne) — stripped only when
     // something remains; bare postpositions never become the name
@@ -124,24 +124,54 @@ object IntentParser {
         if (vi >= 0) {
             val after = words.drop(vi + 1).filter { it !in FILLER }
             val stop = AND_WORDS + MSG_VERBS + OPEN_VERBS + APP_ALIASES.values.flatten()
-            // 1) name before the verb ("beru ko maisej karo hello")
-            val before = words.take(vi).filter { it !in FILLER }
-            val rev = before.reversed().takeWhile { it !in stop }.reversed().toList()
-            if (rev.isNotEmpty() && rev.all { it.all { c -> c.isLetter() } }) {
-                recipient = sanitizeName(rev.joinToString(" "))
-                val rest = after.filter { it !in AND_WORDS }
-                if (rest.isNotEmpty()) message = rest.joinToString(" ")
+            // recipient search zones in priority order: before the app
+            // ("tushar ko whatsapp…"), between app and verb ("…whatsapp…
+            // berune mesej"), and only then right after the verb.
+            // Message words sitting before the verb ("…par hi bhejo") must
+            // never be eaten as the name.
+            val ai = words.indexOfFirst { w -> APP_ALIASES.values.flatten().any { it == w } }
+            val zones = mutableListOf<List<String>>()
+            if (ai in 0 until vi) {
+                zones.add(words.take(ai))
+                zones.add(words.drop(ai + 1).take(vi - ai - 1))
             } else {
-                // 2) name right after the verb ("maisej beru xxx"):
+                zones.add(words.take(vi))
+            }
+            fun runOf(list: List<String>): List<String> {
+                val f = list.filter { it !in FILLER }
+                return f.reversed()
+                    .takeWhile { it !in stop && it.all { c -> c.isLetter() } }
+                    .reversed().toList()
+            }
+            var nameParts: List<String> = emptyList()
+            for (z in zones) {
+                val run = runOf(z)
+                // a lone 1-2 letter token ("hi", "ok") is message text,
+                // not a name — the message pool below recovers it
+                if (run.size == 1 && run[0].length <= 2) continue
+                nameParts = run
+                if (nameParts.isNotEmpty()) break
+            }
+            if (nameParts.isEmpty()) {
+                // name right after the verb ("maisej beru xxx"):
                 // FIRST name-like token only — the rest is message text,
-                // never part of the name
+                // never part of the name (same 1-2 letter guard)
                 val first = after.firstOrNull()
-                if (first != null && first !in stop && first.all { c -> c.isLetter() }) {
-                    recipient = sanitizeName(first)
-                    val rest = after.drop(1).filter { it !in AND_WORDS }
-                    if (rest.isNotEmpty()) message = rest.joinToString(" ")
+                if (first != null && first !in stop && first.all { c -> c.isLetter() } &&
+                    first.length > 2
+                ) {
+                    nameParts = listOf(first)
                 }
             }
+            if (nameParts.isNotEmpty()) recipient = sanitizeName(nameParts.joinToString(" "))
+            // message = pre-verb leftovers + post-verb tail, minus everything
+            // already consumed (verbs, app, fillers, the recipient itself)
+            val skipMsg = (AND_WORDS + MSG_VERBS + OPEN_VERBS +
+                APP_ALIASES.values.flatten() + FILLER + nameParts).toSet()
+            val preMsg = words.take(vi).filter { it !in skipMsg }
+            val postMsg = after.filter { it !in AND_WORDS && it !in nameParts }
+            val combined = (preMsg + postMsg).filter { it.isNotBlank() }
+            if (combined.isNotEmpty()) message = combined.joinToString(" ")
         }
         return MsgIntent("message", app, recipient, message?.ifBlank { null })
     }
@@ -182,3 +212,5 @@ object IntentParser {
         }
     }
 }
+
+// touch to force recompile
