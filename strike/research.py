@@ -120,7 +120,12 @@ def research(question, progress=None):
         "Output: 1) 3-8 bullet claims, each ending with the source number(s) "
         "like [1][3]. 2) A line 'CONTRADICTIONS: ...' listing disagreements, "
         "or 'none'. 3) A 2-4 sentence synthesis. If sources don't support an "
-        "answer, say so — never invent.\n\nQuestion: " + question +
+        "answer, say so — never invent.\n"
+        "Copy this exact shape:\n"
+        "- Gandhinagar is the capital of Gujarat [1][3]\n"
+        "- It lies on the Sabarmati river [2]\n"
+        "CONTRADICTIONS: none\n\n"
+        "Question: " + question +
         "\n\nSources:\n" + "\n\n".join(numbered))
     try:
         raw = _llm.query_llm(prompt, system_prompt=(
