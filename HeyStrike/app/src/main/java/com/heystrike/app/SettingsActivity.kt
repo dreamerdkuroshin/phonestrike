@@ -267,7 +267,10 @@ class SettingsActivity : AppCompatActivity() {
                 else ModelManager.dir(this)
                 val heard = try {
                     val m = Model(dir.absolutePath)
-                    val r = Recognizer(m, 16000f, "[\"hey strike\"]")
+                    // FULL grammar here, not the wake grammar: a constrained
+                    // decode would (correctly) return empty for non-wake speech
+                    // and hide a working model behind a false ASR_EMPTY
+                    val r = Recognizer(m, 16000f)
                     val bytes = rec.toByteArray()
                     var off = 0
                     while (off < bytes.size) {

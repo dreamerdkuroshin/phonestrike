@@ -37,7 +37,9 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         // normalize FIRST: Devanagari/Gujarati ASR becomes Latin, so every
         // matcher below (wake, verbs, contacts, apps) stays monolingual.
         // Raw text is still what gets recorded and displayed.
-        val t = WakeMatcher.stripWake(Transliterate.normalize(text))
+        val norm = Transliterate.normalize(text)
+        val t = WakeMatcher.stripWake(norm)
+        val hadWake = t != norm
         val hindi = Prefs.voiceLang(ctx) == "hi" ||
             text.any { it.code in 0x0900..0x0AFF }
         // HITL confirmation release ("yes"/"no"/"haan") — before every other route
@@ -79,7 +81,7 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         // multilingual message/open compounds: structured intent with known
         // slots, or ONE clarification question — never a blind guess, and
         // never silence when the transcript lost a word
-        routeIntent(t, hindi)?.let { return it }
+        routeIntent(t, hindi, hadWake, text)?.let { return it }
         // P4: multi-step / contact tasks go to the planner (observe→act→verify),
         // not the direct parser. e.g. "open whatsapp and call rahul".
         if (t.startsWith("call ") || " and " in t || " then " in t || t.startsWith("tap ")) {
@@ -213,7 +215,9 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         // fresh command: a stale Stop from a previous turn must not kill this
         // stream (askServerStream polls stopRequested while reading SSE)
         StrikeAgent.stopRequested = false
-        val t = WakeMatcher.stripWake(Transliterate.normalize(text))
+        val norm = Transliterate.normalize(text)
+        val t = WakeMatcher.stripWake(norm)
+        val hadWake = t != norm
         val hindi = Prefs.voiceLang(ctx) == "hi" ||
             text.any { it.code in 0x0900..0x0AFF }
         // HITL confirmation release ("yes"/"no"/"haan") — before every other route
@@ -277,7 +281,7 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         }
         // multilingual message/open compounds: structured intent or ONE
         // clarification — never a blind guess, never silence
-        routeIntent(t, hindi)?.let { ans ->
+        routeIntent(t, hindi, hadWake, text)?.let { ans ->
             onToken(ans)
             onDone()
             return
@@ -343,6 +347,30 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         return out.toString().ifBlank { "Sorry, empty reply." }
     }
 
+    /**
+     * Raw blocking LLM call: bypasses mobile/jarvis matching (raw:true) so a
+     * recovery prompt containing words like "open" is never hijacked.
+     */
+    private fun askServerRaw(prompt: String, timeoutMs: Int = 90000): String? {
+        return try {
+            val url = URL(Prefs.server(ctx) + "/api/chat")
+            val c = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                setRequestProperty("Content-Type", "application/json")
+                connectTimeout = 15000
+                readTimeout = timeoutMs
+                doOutput = true
+            }
+            val body = JSONObject()
+                .put("raw", true)
+                .put("messages", org.json.JSONArray()
+                    .put(JSONObject().put("role", "user").put("content", prompt)))
+                .toString().toByteArray()
+            c.outputStream.use { it.write(body) }
+            c.inputStream.bufferedReader().readText()
+        } catch (_: Exception) { null }
+    }
+
     // ---------- deterministic contact intents ----------
 
     /** ("message"|"text"|"call"|"whatsapp", name) when the command targets a person. */
@@ -403,26 +431,39 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
      * Multilingual intent router (shared by handle/handleStream).
      * String = answered here; null = continue normal routing.
      */
-    private fun routeIntent(t: String, hindi: Boolean): String? {
-        val intent = IntentParser.parseMessage(t) ?: return null
+    private fun routeIntent(t: String, hindi: Boolean, hadWake: Boolean, raw: String): String? {
+        val intent = IntentParser.parseMessage(t)
+        if (intent == null) {
+            // nothing parsed deterministically: with a wake word or a fuzzy
+            // keyword hit, recover via LLM or ask with the transcript shown —
+            // never silent, never a hallucinated chat answer to a command
+            if (!hadWake && !IntentParser.fuzzyHit(t)) return null
+            return recoverOrClarify(t, raw, hindi)
+        }
         if (intent.action == "open") {
             if (intent.app != null) {
                 val label = intent.app.replaceFirstChar { it.uppercase() }
                 return if (launch(appPkg(intent.app))) "$label is open."
                 else "I couldn't open $label."
             }
-            // app lost in ASR ("open aur beru"): probe tokens as a contact —
-            // a hit means a message compound, so clarify instead of failing
-            val probe = t.split(" ").map { it.trim() }.filter { it.isNotBlank() }
-                .firstOrNull { w ->
-                    w !in listOf("open", "launch", "start", "khol", "kholo", "kholna") &&
-                        w !in listOf("and", "aur", "ane", "then")
+            // app lost in ASR ("open aur beru", "oph vatara maich bairut"):
+            // probe content tokens as contacts (exact/prefix/near) — a hit
+            // means a message compound, so clarify instead of failing
+            val skip = setOf(
+                "open", "opan", "oph", "launch", "start", "khol", "kholo", "kholna",
+                "and", "aur", "ane", "then", "message", "msg", "maisej", "mesej",
+                "mesij", "send", "text", "bhej", "bhejo", "ko", "ke", "ne", "to"
+            )
+            val probes = t.split(" ").map { it.trim() }.filter {
+                it.isNotBlank() && it !in skip && it.all { c -> c.isLetter() }
+            }.take(4)
+            for (p in probes) {
+                val hit = ContactResolver.resolve(ctx, p)
+                if (hit.error == null && hit.name != null) {
+                    val pend = IntentParser.MsgIntent("message", null, hit.name, null)
+                    PendingTask.set(pend)
+                    return IntentParser.clarify(pend, hindi)
                 }
-            val hit = probe?.let { ContactResolver.resolve(ctx, it) }
-            if (hit != null && hit.error == null && hit.name != null) {
-                val pend = IntentParser.MsgIntent("message", null, hit.name, null)
-                PendingTask.set(pend)
-                return IntentParser.clarify(pend, hindi)
             }
             return null
         }
@@ -441,6 +482,57 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
             return IntentParser.clarify(msg, hindi)
         }
         return runPlanner(t)
+    }
+
+    /**
+     * Last-resort command recovery for noisy transcripts ("oph vatara maich
+     * bairut"): one local LLM extraction with strict validation, else a
+     * clarification that SHOWS what was heard. Validation gates (known app,
+     * contact-checked recipient) mean the LLM can never invent an action.
+     */
+    private fun recoverOrClarify(t: String, raw: String, hindi: Boolean): String {
+        val heard = raw.trim().ifBlank { t }.take(160)
+        val prompt = "Noisy Hinglish voice transcript. Extract ONE intent as JSON like " +
+            "{\"action\":\"message\",\"app\":\"whatsapp\",\"recipient\":\"Beru\",\"message\":\"hello\"} " +
+            "or {\"action\":\"open\",\"app\":\"chrome\"}. action is message|open|none. " +
+            "Known apps: whatsapp. If it is a question or chit-chat, use {\"action\":\"none\"}. " +
+            "Unknown slots: \"?\". Reply ONLY the JSON, no other words. " +
+            "Transcript: \"$t\""
+        try {
+            askServerRaw(prompt)?.let { resp ->
+                val rec = IntentParser.parseRecoveryJson(resp) ?: return@let
+                if (rec.action == "open" && rec.app != null) {
+                    val label = rec.app.replaceFirstChar { it.uppercase() }
+                    return if (launch(appPkg(rec.app))) "$label is open."
+                    else "I couldn't open $label."
+                }
+                if (rec.action == "message") {
+                    if (rec.recipient != null) {
+                        val r = ContactResolver.resolve(ctx, rec.recipient)
+                        val name = r.name
+                        if (r.error == null && name != null) {
+                            val pend = IntentParser.MsgIntent("message", rec.app, name, rec.message)
+                            if (pend.complete) return runPlanner(
+                                "open ${rec.app ?: "app"} and message $name ${rec.message ?: ""}".trim())
+                            PendingTask.set(pend)
+                            return IntentParser.clarify(pend, hindi)
+                        }
+                        // recipient not a contact: do NOT invent — clarify
+                        val pend = IntentParser.MsgIntent("message", rec.app, null, rec.message)
+                        PendingTask.set(pend)
+                        return IntentParser.clarify(pend, hindi)
+                    }
+                    if (rec.app != null || rec.message != null) {
+                        val pend = IntentParser.MsgIntent("message", rec.app, null, rec.message)
+                        PendingTask.set(pend)
+                        return IntentParser.clarify(pend, hindi)
+                    }
+                }
+            }
+        } catch (_: Exception) { }
+        // recovery failed or found nothing: ask WITH the transcript shown
+        return if (hindi) "Maine suna: “$heard” — kya karna hai, dobara bolo?"
+        else "I heard: “$heard” — what should I do?"
     }
 
     private fun runPlanner(text: String): String {        return try {

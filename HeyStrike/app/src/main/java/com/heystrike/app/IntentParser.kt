@@ -35,8 +35,8 @@ object IntentParser {
             "vhatsaip", "vhaatsaip", "votsep", "votsaep", "watsapp", "whatsap"
         )
     )
-    // "opan" is the faithful rendering of Devanagari ओपन (no written e)
-    private val OPEN_VERBS = listOf("open", "opan", "launch", "start", "khol", "kholo", "kholna")
+    // "opan"/"oph" are faithful renderings of Devanagari ओपन/ऑफ़ (no written e)
+    private val OPEN_VERBS = listOf("open", "opan", "oph", "launch", "start", "khol", "kholo", "kholna")
     private val MSG_VERBS = listOf(
         "message", "msg", "maisej", "mesej", "mesij", "send", "text",
         "bhej", "bhejo", "bhejna", "likh", "likho"
@@ -72,6 +72,38 @@ object IntentParser {
     fun hasOpenVerb(t: String) = OPEN_VERBS.any { hasWord(t, it) }
 
     fun hasMsgVerb(t: String) = MSG_VERBS.any { hasWord(t, it) }
+
+    /** Edit distance for fuzzy keyword hits on noisy transcripts. */
+    fun distance(a: String, b: String): Int {
+        if (a == b) return 0
+        val dp = Array(a.length + 1) { IntArray(b.length + 1) { 0 } }
+        for (i in 0..a.length) dp[i][0] = i
+        for (j in 0..b.length) dp[0][j] = j
+        for (i in 1..a.length) for (j in 1..b.length) {
+            dp[i][j] = minOf(
+                dp[i - 1][j] + 1, dp[i][j - 1] + 1,
+                dp[i - 1][j - 1] + if (a[i - 1] == b[j - 1]) 0 else 1)
+        }
+        return dp[a.length][b.length]
+    }
+
+    private val FUZZY_BANK = OPEN_VERBS + MSG_VERBS + APP_ALIASES.values.flatten()
+
+    /** Any word close to a known keyword. Thresholds scale with length so
+     *  short words ("today"~"opan" = 3) can't false-fire while mangled long
+     *  words ("maich"~"maisej" = 3) still count: only len>=5 anchors are
+     *  fuzzy-matched (short verbs already match exactly). One hit suffices —
+     *  recovery validates strictly afterwards, so a false hit only costs one
+     *  local LLM call that returns {"action":"none"}. */
+    fun fuzzyHit(t: String): Boolean {
+        for (w in t.split(" ").filter { it.length >= 5 && it.all { c -> c.isLetter() } }) {
+            for (k in FUZZY_BANK) {
+                if (k.length < 5 || " " in k) continue
+                if (distance(w, k) <= 3) return true
+            }
+        }
+        return false
+    }
 
     /**
      * Parse a message/open compound. Null = not a message/open command at
@@ -112,6 +144,29 @@ object IntentParser {
             }
         }
         return MsgIntent("message", app, recipient, message?.ifBlank { null })
+    }
+
+    /**
+     * Validate one LLM recovery-JSON blob. Strict gates: action must be
+     * message|open (else null = not a command), app must be a KNOWN
+     * canonical alias (else null — the LLM can never invent an action).
+     * Pure function, unit-tested with canned model outputs.
+     */
+    fun parseRecoveryJson(resp: String): MsgIntent? {
+        val json = Regex("\\{[^}]*\\}").find(resp)?.value ?: return null
+        fun field(name: String): String? {
+            val v = Regex("\"$name\"\\s*:\\s*\"([^\"]*)\"").find(json)?.groupValues?.get(1)
+            return if (v.isNullOrBlank() || v == "?") null else v
+        }
+        val action = field("action") ?: return null
+        if (action != "message" && action != "open") return null
+        val app = field("app")?.lowercase()?.let { a ->
+            APP_ALIASES.keys.firstOrNull { k -> k == a || APP_ALIASES[k]?.contains(a) == true }
+        }
+        if (action == "open" && app == null) return null
+        val recipient = field("recipient")?.let { sanitizeName(it) }
+        val message = field("message")
+        return MsgIntent(action, app, recipient, message)
     }
 
     /** Language-aware clarification for the first missing slot. */

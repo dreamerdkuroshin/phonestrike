@@ -110,8 +110,43 @@ class VoiceLangTest {
     }
 
     @Test
-    fun confirmHindi() {
-        assertEquals(PendingConfirm.Answer.YES, PendingConfirm.classify("haan"))
+    fun fuzzyAndRecoveryJson() {
+        // "maich" is 2 edits from "maisej" — fuzzy gate must catch it
+        assertTrue(IntentParser.fuzzyHit("oph vatara maich bairut"))
+        assertEquals(1, IntentParser.distance("opan", "open"))
+        assertFalse(IntentParser.fuzzyHit("weather"))
+        assertFalse(IntentParser.fuzzyHit("today"))
+        assertFalse(IntentParser.fuzzyHit("what is the weather today"))
+        // strict recovery-JSON validation: canned model outputs
+        val ok = IntentParser.parseRecoveryJson(
+            "{\"action\":\"message\",\"app\":\"whatsapp\",\"recipient\":\"Beru\",\"message\":\"hello\"}")!!
+        assertEquals("message", ok.action)
+        assertEquals("whatsapp", ok.app)
+        assertEquals("Beru", ok.recipient)
+        assertEquals("hello", ok.message)
+        assertTrue(ok.complete)
+        // alias canonicalizes
+        val alias = IntentParser.parseRecoveryJson(
+            "{\"action\":\"open\",\"app\":\"votsaip\"}")!!
+        assertEquals("whatsapp", alias.app)
+        // unknown app can never validate
+        assertNull(IntentParser.parseRecoveryJson(
+            "{\"action\":\"open\",\"app\":\"facebook\"}")?.app)
+        // chit-chat / garbage never validates
+        assertNull(IntentParser.parseRecoveryJson("{\"action\":\"none\"}")?.let {
+            if (it.action == "none") null else it
+        })
+        assertNull(IntentParser.parseRecoveryJson("not json at all"))
+        // "?" slots stay null
+        val partial = IntentParser.parseRecoveryJson(
+            "{\"action\":\"message\",\"app\":\"?\",\"recipient\":\"?\",\"message\":\"?\"}")!!
+        assertNull(partial.app)
+        assertNull(partial.recipient)
+        assertFalse(partial.complete)
+    }
+
+    @Test
+    fun confirmHindi() {        assertEquals(PendingConfirm.Answer.YES, PendingConfirm.classify("haan"))
         assertEquals(PendingConfirm.Answer.YES, PendingConfirm.classify("theek hai"))
         assertEquals(PendingConfirm.Answer.NO, PendingConfirm.classify("nahi"))
         assertEquals(PendingConfirm.Answer.NO, PendingConfirm.classify("mat karo"))

@@ -38,9 +38,11 @@ class OverlayService : Service() {
         inst = this
         tts = TextToSpeech(this) { st ->
             if (st == TextToSpeech.SUCCESS) {
-                // Hindi/Hinglish answers speak Hindi; else US English
-                tts?.language =
-                    if (Prefs.voiceLang(this) == "hi") Locale("hi") else Locale.US
+                // Hindi/Hinglish answers speak Hindi; else US English.
+                // Missing voice data must fall back, never go silent.
+                val want = if (Prefs.voiceLang(this) == "hi") Locale("hi") else Locale.US
+                tts?.language = want
+                if (tts?.isLanguageAvailable(want) ?: -1 < 0) tts?.language = Locale.US
                 ttsReady = true
             }
         }
