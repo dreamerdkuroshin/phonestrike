@@ -174,6 +174,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.modelBtn).setOnClickListener { downloadModels() }
         findViewById<Button>(R.id.testBtn).setOnClickListener { micTest() }
+        findViewById<Button>(R.id.ttsBtn).setOnClickListener { ttsTest() }
         findViewById<Button>(R.id.langBtn).setOnClickListener {
             val next = if (Prefs.voiceLang(this) == "hi") "en" else "hi"
             Prefs.setVoiceLang(this, next)
@@ -209,6 +210,48 @@ class SettingsActivity : AppCompatActivity() {
     private fun refreshLangRow() {
         findViewById<TextView>(R.id.langStatus).text =
             if (Prefs.voiceLang(this) == "hi") "Hindi / Hinglish" else "English"
+        OverlayService.lastTtsError?.let {
+            findViewById<TextView>(R.id.ttsStatus).text = it
+        }
+    }
+
+    /**
+     * Voice-output self-test: checks the #1 silent-answer cause (media volume
+     * at zero) BEFORE touching TTS, then plays a test line. If you hear
+     * nothing and the volume is up, the status line names the engine error.
+     */
+    private fun ttsTest() {
+        val st = findViewById<TextView>(R.id.ttsStatus)
+        val am = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
+        val vol = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+        if (vol == 0) {
+            st.text = "Media volume is 0 — raise it, then Test again"
+            Toast.makeText(this, "Media volume is 0 — raise volume, then retry",
+                Toast.LENGTH_LONG).show()
+            return
+        }
+        st.text = "Playing test… did you hear it?"
+        var tts: android.speech.tts.TextToSpeech? = null
+        tts = android.speech.tts.TextToSpeech(this) { code ->
+            if (code != android.speech.tts.TextToSpeech.SUCCESS) {
+                runOnUiThread { st.text = "TTS engine failed ($code)" }
+                return@TextToSpeech
+            }
+            val want = if (Prefs.voiceLang(this) == "hi") java.util.Locale("hi")
+            else java.util.Locale.US
+            tts?.language = want
+            if (tts?.isLanguageAvailable(want) ?: -1 < 0) tts?.language = java.util.Locale.US
+            val rc = tts?.speak("Strike voice test. Can you hear me?",
+                android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "strike-test")
+            runOnUiThread {
+                st.text = if (rc == android.speech.tts.TextToSpeech.ERROR)
+                    "speak() rejected — engine busy or broken"
+                else "Playing test… did you hear it?"
+            }
+        }
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            try { tts?.shutdown() } catch (_: Exception) {}
+        }, 8000)
     }
 
     /**

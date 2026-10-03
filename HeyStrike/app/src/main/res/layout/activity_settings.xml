@@ -168,6 +168,18 @@
                 <TextView android:id="@+id/testStatus" style="@style/RowStatus" android:text="Not run" />
                 <Button android:id="@+id/testBtn" style="@style/RowBtn" android:text="Test" />
             </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Voice output (TTS)" />
+                <TextView android:id="@+id/ttsStatus" style="@style/RowStatus" android:text="Not tested" />
+                <Button android:id="@+id/ttsBtn" style="@style/RowBtn" android:text="Test" />
+            </LinearLayout>
         </LinearLayout>
 
         <!-- ===== AI MODEL ===== -->

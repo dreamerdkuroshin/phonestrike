@@ -43,7 +43,20 @@ class OverlayService : Service() {
                 val want = if (Prefs.voiceLang(this) == "hi") Locale("hi") else Locale.US
                 tts?.language = want
                 if (tts?.isLanguageAvailable(want) ?: -1 < 0) tts?.language = Locale.US
+                tts?.setOnUtteranceProgressListener(object :
+                    android.speech.tts.UtteranceProgressListener() {
+                    override fun onStart(id: String?) {}
+                    override fun onDone(id: String?) {}
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(id: String?) {
+                        lastTtsError = "utterance $id failed to play"
+                        Log.e(TAG, "TTS $id error — audio silent")
+                    }
+                })
                 ttsReady = true
+            } else {
+                lastTtsError = "TTS engine init failed ($st)"
+                Log.e(TAG, "TTS init failed: $st")
             }
         }
         api = StrikeApi(applicationContext, tts)
@@ -223,7 +236,17 @@ class OverlayService : Service() {
             Log.i(TAG, "tts started")
         }
         // QUEUE_ADD = ChatGPT-style continuous speech while text keeps streaming
-        tts?.speak(clean, TextToSpeech.QUEUE_ADD, null, "strike$gen")
+        val rc = try {
+            tts?.speak(clean, TextToSpeech.QUEUE_ADD, null, "strike$gen")
+                ?: TextToSpeech.ERROR
+        } catch (e: Exception) {
+            lastTtsError = "speak() threw: ${e.message}"
+            TextToSpeech.ERROR
+        }
+        if (rc == TextToSpeech.ERROR) {
+            lastTtsError = "speak() rejected (engine null or busy)"
+            Log.e(TAG, "TTS speak rejected — answer will show as text only")
+        }
     }
 
     private fun hide() {
@@ -244,6 +267,10 @@ class OverlayService : Service() {
     companion object {
         const val ACTION_HIDE = "hide"
         const val TAG = "HeyStrikeAssistant"
+
+        /** Last TTS failure, if any — surfaced in Settings voice output row. */
+        @Volatile
+        var lastTtsError: String? = null
 
         /** True while the orb is on screen (guards stale HIDE intents). */
         @Volatile

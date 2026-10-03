@@ -153,6 +153,8 @@ class GateEngine(
             var echoBase = 0.02
             var echoFrames = 0
             var barFrames = 0
+            // wake debounce: consecutive wake-positive partial frames
+            var wakeStreak = 0
             while (running.get()) {
                 val n = audio?.read(buf, 0, buf.size) ?: -1
                 if (n <= 0) {
@@ -168,6 +170,10 @@ class GateEngine(
                 // wake match on the NORMALIZED partial: Hindi-model renders
                 // "hey strike" as Devanagari ("air/eyar strike" seen live)
                 val wake = WakeMatcher.isWake(Transliterate.normalize(partial))
+                // streak counts consecutive wake-positive frames for BOTH
+                // trigger paths below (single-frame TV blips must not fire)
+                if (wake) wakeStreak++ else wakeStreak = 0
+                val wakeHeld = wake && wakeStreak >= 2
 
                 // ---- barge-in: user speaks while Strike is answering ----
                 val speakingNow =
@@ -188,10 +194,11 @@ class GateEngine(
                     barFrames = 0
                 }
 
-                if (speakingNow && (wake || barge)) {
+                if (speakingNow && (wakeHeld || barge)) {
                     Log.i(StrikeVoiceController.TAG,
                         "barge-in (wake=$wake energy=$barge) — stopping TTS, capturing turn")
                     commandRequested = false
+                    wakeStreak = 0
                     barFrames = 0
                     echoFrames = 0
                     StrikeVoiceController.noteWake()
@@ -208,10 +215,15 @@ class GateEngine(
                 }
 
                 val inCooldown = System.currentTimeMillis() < cooldownUntil
-                if (wake && inCooldown) continue
+                // wake debounce: streak is maintained above; a lone blip in
+                // cooldown still resets nothing but never fires
+                if (wake && inCooldown) {
+                    continue
+                }
                 // commandRequested is an explicit user gesture (mic/assist key):
                 // it is never suppressed by the wake cooldown
-                if (wake || commandRequested) {
+                if (wakeHeld || commandRequested) {
+                    wakeStreak = 0
                     commandRequested = false
                     // snapshot the tail BEFORE live reading resumes
                     val tail = ring.tail()
