@@ -2,7 +2,7 @@
 from . import config
 
 
-def query_llm(user_text, system_prompt=None, timeout=120):
+def query_llm(user_text, system_prompt=None, timeout=120, max_tokens=None):
     """Send single prompt to configured LLM backend. Returns text."""
     import requests
     base_url = config.get_base_url()
@@ -13,6 +13,8 @@ def query_llm(user_text, system_prompt=None, timeout=120):
         msgs.append({"role": "system", "content": system_prompt})
     msgs.append({"role": "user", "content": user_text})
     payload = {"model": model, "messages": msgs, "stream": False, "temperature": 0.7}
+    if max_tokens:
+        payload["max_tokens"] = max_tokens
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"

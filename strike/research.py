@@ -112,7 +112,7 @@ def research(question, progress=None):
                 "verified": False, "elapsed_s": round(time.time() - started, 1)}
 
     numbered = [f"[{i + 1}] {d['title']} ({_host(d['url'])})\n{d['text'][:350]}"
-                for i, d in enumerate(docs)]
+                for i, d in enumerate(docs[:3])]
     # ponytail: phone LLM runs ctx 2048 — evidence budget ~2k chars total so
     # the prompt fits with room to generate (4×2500 blew past it live).
     prompt = (
@@ -125,7 +125,7 @@ def research(question, progress=None):
     try:
         raw = _llm.query_llm(prompt, system_prompt=(
             "You are a research synthesizer. Cite every claim with [n]. "
-            "No citations = no claim."), timeout=180)
+            "No citations = no claim."), timeout=180, max_tokens=300)
     except Exception as e:
         return {"research_id": rid, "question": question, "queries": queries,
                 "sources": [{"url": d["url"], "title": d["title"]} for d in docs],
@@ -145,8 +145,9 @@ def research(question, progress=None):
             claims.append(s)
     # cross-check: claims citing the same fact from 2+ sources
     multi = [c for c in claims if len(re.findall(r"\[(\d+)\]", c)) >= 2]
+    cited = docs[:3]  # numbering matches the [n] evidence above
     return {"research_id": rid, "question": question, "queries": queries,
-            "sources": [{"url": d["url"], "title": d["title"]} for d in docs],
+            "sources": [{"url": d["url"], "title": d["title"]} for d in cited],
             "claims": claims, "multi_sourced_claims": len(multi),
             "contradictions": contradictions,
             "synthesis": raw[:2000], "verified": bool(claims),

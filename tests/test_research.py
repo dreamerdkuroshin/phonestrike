@@ -33,7 +33,7 @@ def test_research_full_path(monkeypatch):
                         lambda u, timeout=10: ("T-" + u, "long enough body text " * 30, None))
     seen = {}
 
-    def fake_llm(prompt, system_prompt=None, timeout=180):
+    def fake_llm(prompt, **k):
         seen["prompt"] = prompt
         return ("- Delhi is the capital [1][2]\n"
                 "- Population is large [2]\n"
@@ -46,7 +46,7 @@ def test_research_full_path(monkeypatch):
     assert out["contradictions"] == "none"
     assert len(out["sources"]) == 2
     # regression: phone LLM runs ctx 2048 — evidence must fit with room to answer
-    assert len(seen["prompt"]) <= 2600
+    assert len(seen["prompt"]) <= 2000
 
 
 def test_research_llm_down(monkeypatch):
