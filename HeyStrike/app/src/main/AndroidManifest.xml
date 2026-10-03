@@ -86,6 +86,13 @@
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
 
+        <!-- Persistent capture session inside one OS grant (no caller yet —
+             the agent observe loop wires to ScreenSessionService.requestFrame next) -->
+        <service
+            android:name=".ScreenSessionService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
         <service
             android:name=".VoiceService"
             android:foregroundServiceType="microphone"
