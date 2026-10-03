@@ -24,11 +24,18 @@ object ModelManager {
      * (segfault — no Java stack, instant process death, clear-data "fixes"
      * it). Existence alone is not enough; required files must have sane
      * sizes. Failure here routes to re-download, never to the gate.
+     * Graph layout differs per model: small-en ships one HCLG.fst,
+     * small-hi ships the Gr.fst + HCLr.fst pair (no HCLG.fst at all —
+     * demanding it made Hindi downloads fail verification forever).
      */
-    private val VOSK_REQUIRED = mapOf(
+    private val VOSK_COMMON = mapOf(
         "am/final.mdl" to 100_000L,
-        "graph/HCLG.fst" to 100_000L,
         "conf/model.conf" to 10L
+    )
+    private val VOSK_GRAPH_EN = mapOf("graph/HCLG.fst" to 100_000L)
+    private val VOSK_GRAPH_HI = mapOf(
+        "graph/Gr.fst" to 100_000L,
+        "graph/HCLr.fst" to 100_000L
     )
     private val SHERPA_MIN = mapOf(
         "encoder-epoch-99-avg-1.int8.onnx" to 5_000_000L,
@@ -46,16 +53,17 @@ object ModelManager {
         return true
     }
 
-    fun voskRequired(): Map<String, Long> = VOSK_REQUIRED
+    fun voskRequired(lang: String = "en"): Map<String, Long> =
+        VOSK_COMMON + if (lang == "hi") VOSK_GRAPH_HI else VOSK_GRAPH_EN
     fun sherpaMin(): Map<String, Long> = SHERPA_MIN
 
-    fun ready(c: Context): Boolean = verifyFiles(dir(c), VOSK_REQUIRED)
+    fun ready(c: Context): Boolean = verifyFiles(dir(c), voskRequired("en"))
 
     /** Corrupt model found: delete so the next Start re-downloads instead of
      *  native-crashing the process. Returns true if anything was removed. */
     fun purgeIfCorrupt(c: Context, lang: String): Boolean {
         val d = if (lang == "hi") hiDir(c) else dir(c)
-        if (d.exists() && !verifyFiles(d, VOSK_REQUIRED)) {
+        if (d.exists() && !verifyFiles(d, voskRequired(lang))) {
             try { d.deleteRecursively() } catch (_: Exception) {}
             return true
         }
@@ -79,7 +87,7 @@ object ModelManager {
 
     fun hiDir(c: Context): File = File(c.filesDir, "models/small-hi")
 
-    fun hiReady(c: Context): Boolean = verifyFiles(hiDir(c), VOSK_REQUIRED)
+    fun hiReady(c: Context): Boolean = verifyFiles(hiDir(c), voskRequired("hi"))
 
     /** Model required for the given language pref. */
     fun readyFor(c: Context, lang: String): Boolean =

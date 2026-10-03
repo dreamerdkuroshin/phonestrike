@@ -72,4 +72,27 @@ class RouterTest {
             dir.deleteRecursively()
         }
     }
+
+    @Test
+    fun hindiGraphLayout() {
+        // small-hi ships Gr.fst + HCLr.fst and NO HCLG.fst (verified against
+        // the real upstream zip) — demanding HCLG broke Hindi downloads forever
+        val dir = createTempDir("modelhi")
+        try {
+            fun put(rel: String, n: Int) {
+                java.io.File(dir, rel).apply {
+                    parentFile!!.mkdirs()
+                    writeBytes(ByteArray(n))
+                }
+            }
+            put("am/final.mdl", 150_000)
+            put("conf/model.conf", 100)
+            put("graph/Gr.fst", 150_000)
+            put("graph/HCLr.fst", 150_000)
+            assertTrue(ModelManager.verifyFiles(dir, ModelManager.voskRequired("hi")))
+            assertFalse(ModelManager.verifyFiles(dir, ModelManager.voskRequired("en")))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 }
