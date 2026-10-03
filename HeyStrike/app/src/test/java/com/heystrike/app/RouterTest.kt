@@ -43,4 +43,33 @@ class RouterTest {
         assertEquals(ShizukuManager.State.NOT_INSTALLED,
             ShizukuManager.State.valueOf("NOT_INSTALLED"))
     }
+
+    @Test
+    fun modelIntegrity() {
+        val dir = createTempDir("model")
+        try {
+            // empty dir: not ready (would have native-crashed the gate before)
+            assertFalse(ModelManager.verifyFiles(dir, ModelManager.voskRequired()))
+            val amf = java.io.File(dir, "am/final.mdl").apply {
+                parentFile!!.mkdirs()
+                writeBytes(ByteArray(150_000))
+            }
+            // partial model (one file of three): still not ready
+            assertFalse(ModelManager.verifyFiles(dir, ModelManager.voskRequired()))
+            java.io.File(dir, "graph/HCLG.fst").apply {
+                parentFile!!.mkdirs()
+                writeBytes(ByteArray(150_000))
+            }
+            java.io.File(dir, "conf/model.conf").apply {
+                parentFile!!.mkdirs()
+                writeBytes(ByteArray(100))
+            }
+            assertTrue(ModelManager.verifyFiles(dir, ModelManager.voskRequired()))
+            // truncated file: not ready
+            amf.writeBytes(ByteArray(10))
+            assertFalse(ModelManager.verifyFiles(dir, ModelManager.voskRequired()))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 }

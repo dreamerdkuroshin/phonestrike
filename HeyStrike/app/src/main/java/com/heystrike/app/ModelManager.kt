@@ -19,8 +19,54 @@ object ModelManager {
 
     fun dir(c: Context): File = File(c.filesDir, "models/small-en")
 
-    fun ready(c: Context): Boolean =
-        File(dir(c), "am/final.mdl").let { it.isFile && it.length() > 0 }
+    /**
+     * Deep readiness: a corrupt/truncated model file kills Vosk NATIVELY
+     * (segfault — no Java stack, instant process death, clear-data "fixes"
+     * it). Existence alone is not enough; required files must have sane
+     * sizes. Failure here routes to re-download, never to the gate.
+     */
+    private val VOSK_REQUIRED = mapOf(
+        "am/final.mdl" to 100_000L,
+        "graph/HCLG.fst" to 100_000L,
+        "conf/model.conf" to 10L
+    )
+    private val SHERPA_MIN = mapOf(
+        "encoder-epoch-99-avg-1.int8.onnx" to 5_000_000L,
+        "decoder-epoch-99-avg-1.onnx" to 100_000L,
+        "joiner-epoch-99-avg-1.int8.onnx" to 100_000L,
+        "tokens.txt" to 1_000L
+    )
+
+    /** Pure file check — JVM-tested. */
+    fun verifyFiles(dir: File, required: Map<String, Long>): Boolean {
+        for ((rel, min) in required) {
+            val f = File(dir, rel)
+            if (!f.isFile || f.length() < min) return false
+        }
+        return true
+    }
+
+    fun voskRequired(): Map<String, Long> = VOSK_REQUIRED
+    fun sherpaMin(): Map<String, Long> = SHERPA_MIN
+
+    fun ready(c: Context): Boolean = verifyFiles(dir(c), VOSK_REQUIRED)
+
+    /** Corrupt model found: delete so the next Start re-downloads instead of
+     *  native-crashing the process. Returns true if anything was removed. */
+    fun purgeIfCorrupt(c: Context, lang: String): Boolean {
+        val d = if (lang == "hi") hiDir(c) else dir(c)
+        if (d.exists() && !verifyFiles(d, VOSK_REQUIRED)) {
+            try { d.deleteRecursively() } catch (_: Exception) {}
+            return true
+        }
+        if (lang != "hi" && sherpaDir(c).exists() && !verifyFiles(sherpaDir(c), SHERPA_MIN)) {
+            SHERPA_FILES.forEach { f ->
+                try { File(sherpaDir(c), f).delete() } catch (_: Exception) {}
+            }
+            return true
+        }
+        return false
+    }
 
     private val downloadLock = java.util.concurrent.locks.ReentrantLock()
 
@@ -33,8 +79,7 @@ object ModelManager {
 
     fun hiDir(c: Context): File = File(c.filesDir, "models/small-hi")
 
-    fun hiReady(c: Context): Boolean =
-        File(hiDir(c), "am/final.mdl").let { it.isFile && it.length() > 0 }
+    fun hiReady(c: Context): Boolean = verifyFiles(hiDir(c), VOSK_REQUIRED)
 
     /** Model required for the given language pref. */
     fun readyFor(c: Context, lang: String): Boolean =
@@ -125,7 +170,7 @@ object ModelManager {
     fun sherpaDir(c: Context): File = File(c.filesDir, "models/sherpa-en20m")
 
     fun sherpaReady(c: Context): Boolean =
-        SHERPA_FILES.all { f -> File(sherpaDir(c), f).length() > 0 }
+        verifyFiles(sherpaDir(c), SHERPA_MIN)
 
     /** Resumable per-file download: HF primary, hf-mirror fallback.
      *  Lock + content-length verify: a truncated file must never be renamed

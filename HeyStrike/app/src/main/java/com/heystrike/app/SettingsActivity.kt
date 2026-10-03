@@ -112,7 +112,13 @@ class SettingsActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             if (!ModelManager.readyFor(this, Prefs.voiceLang(this))) {
-                Toast.makeText(this, "Downloading voice model first…", Toast.LENGTH_SHORT).show()
+                // corrupt counts as missing: purge first so a half-dead model
+                // can never reach the gate (native crash, no stack trace)
+                val purged = ModelManager.purgeIfCorrupt(this, Prefs.voiceLang(this))
+                Toast.makeText(this,
+                    if (purged) "Corrupt voice model removed — downloading fresh…"
+                    else "Downloading voice model first…",
+                    Toast.LENGTH_SHORT).show()
                 downloadModels()
                 return@setOnClickListener
             }

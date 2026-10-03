@@ -37,7 +37,12 @@ class VoiceService : Service() {
 
         val mic = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
-        if (!mic || !ModelManager.readyFor(this, Prefs.voiceLang(this))) return // notification already says why
+        if (!mic || !ModelManager.readyFor(this, Prefs.voiceLang(this))) {
+            // corrupt model must never reach the gate (native crash, no
+            // stack) — purge here too so boot can't loop-crash on it
+            if (mic) ModelManager.purgeIfCorrupt(this, Prefs.voiceLang(this))
+            return // notification already says why
+        }
 
         if (!shell && Prefs.voiceLang(this) != "hi" && !ModelManager.sherpaReady(this)) {
             // background: streaming command model; first command uses Vosk fallback
