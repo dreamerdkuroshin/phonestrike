@@ -73,6 +73,10 @@ object IntentParser {
 
     fun hasMsgVerb(t: String) = MSG_VERBS.any { hasWord(t, it) }
 
+    /** Command-shaped: worth one recovery attempt (else normal chat flow). */
+    fun commandShaped(t: String): Boolean =
+        hasOpenVerb(t) || hasMsgVerb(t) || findApp(t) != null || fuzzyHit(t)
+
     /** Edit distance for fuzzy keyword hits on noisy transcripts. */
     fun distance(a: String, b: String): Int {
         if (a == b) return 0

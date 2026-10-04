@@ -110,8 +110,19 @@ class VoiceLangTest {
     }
 
     @Test
-    fun fuzzyAndRecoveryJson() {
-        // "maich" is 2 edits from "maisej" — fuzzy gate must catch it
+    fun commandShapedGate() {
+        // command-shaped: worth one recovery attempt
+        assertTrue(IntentParser.commandShaped("oph vatara maich bairut"))
+        assertTrue(IntentParser.commandShaped("open whatsapp"))
+        assertTrue(IntentParser.commandShaped("votsaep kholo"))
+        // chat/time/weather: normal flow, never recovery
+        assertFalse(IntentParser.commandShaped("what is the weather today"))
+        assertFalse(IntentParser.commandShaped("time"))
+        assertFalse(IntentParser.commandShaped("tell me a joke"))
+    }
+
+    @Test
+    fun fuzzyAndRecoveryJson() {        // "maich" is 2 edits from "maisej" — fuzzy gate must catch it
         assertTrue(IntentParser.fuzzyHit("oph vatara maich bairut"))
         assertEquals(1, IntentParser.distance("opan", "open"))
         assertFalse(IntentParser.fuzzyHit("weather"))

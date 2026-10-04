@@ -58,11 +58,14 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
                 is PendingTask.Outcome.Run -> runPlanner(o.goal)
             }
         }
-        // wake-only / blank turn ("hey strike" with no command): do NOT run
-        // the planner or LLM on it — invite continuation instead. This is the
-        // #1 false turn on-device (wake decoded, command lost).
+        // wake-only / blank turn ("hey strike" with no command): a WAKE-
+        // initiated blip (TV/music/model echo) dies SILENTLY — speaking a
+        // prompt at background noise is how Reels get "answered". Only an
+        // explicit gesture/typed turn (no wake in it) gets the spoken invite.
         if (t.isBlank() || (hadWake && WakeMatcher.stripWake(t).isBlank())) {
-            Log.i(StrikeVoiceController.TAG, "turn wake-only/blank — inviting continuation")
+            Log.i(StrikeVoiceController.TAG, "turn wake-only/blank hadWake=$hadWake — " +
+                if (hadWake) "dropped silently" else "inviting continuation")
+            if (hadWake) return ""
             return if (hindi) "Ji, sun raha hoon — aage bolo?"
             else "Yes? I'm listening — go ahead."
         }
@@ -149,6 +152,10 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         // pending contact ambiguity: (original command, extracted name)
         @Volatile
         private var pendingContact: Pair<String, String>? = null
+
+        // sustained-noise guard: last time recovery found no command
+        @Volatile
+        private var lastRecoveryNoneMs = 0L
 
         private val pkgMap = mapOf(
             "whatsapp" to "com.whatsapp", "youtube" to "com.google.android.youtube",
@@ -252,11 +259,16 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
             onDone()
             return
         }
-        // wake-only / blank turn: invite continuation, never run planner/LLM
+        // wake-only / blank turn: a WAKE-initiated blip (TV/music/model echo)
+        // dies SILENTLY — speaking at background noise is how Reels get
+        // "answered". Only explicit gesture/typed turns get the spoken invite.
         if (t.isBlank() || (hadWake && WakeMatcher.stripWake(t).isBlank())) {
-            Log.i(StrikeVoiceController.TAG, "turn wake-only/blank — inviting continuation")
-            onToken(if (hindi) "Ji, sun raha hoon — aage bolo?"
-            else "Yes? I'm listening — go ahead.")
+            Log.i(StrikeVoiceController.TAG, "turn wake-only/blank hadWake=$hadWake — " +
+                if (hadWake) "dropped silently" else "inviting continuation")
+            if (!hadWake) {
+                onToken(if (hindi) "Ji, sun raha hoon — aage bolo?"
+                else "Yes? I'm listening — go ahead.")
+            }
             onDone()
             return
         }
@@ -454,10 +466,20 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
     private fun routeIntent(t: String, hindi: Boolean, hadWake: Boolean, raw: String): String? {
         val intent = IntentParser.parseMessage(t)
         if (intent == null) {
-            // nothing parsed deterministically: with a wake word or a fuzzy
-            // keyword hit, recover via LLM or ask with the transcript shown —
-            // never silent, never a hallucinated chat answer to a command
+            // nothing parsed deterministically. Typed/gesture turns and
+            // non-command speech (chat, time, weather) keep the normal flow.
             if (!hadWake && !IntentParser.fuzzyHit(t)) return null
+            // wake-initiated but not command-shaped (no verb/app/fuzzy hit):
+            // normal flow — the server/chat owns it, not recovery
+            if (hadWake && !IntentParser.commandShaped(t)) return null
+            // sustained-noise guard: a recent recovery-none means background
+            // audio is talking — stay silent instead of burning LLM calls and
+            // speaking at the TV. Exact-match commands and mic taps never
+            // pass through here, so real commands still work.
+            if (System.currentTimeMillis() - lastRecoveryNoneMs < 60_000) {
+                Log.i(StrikeVoiceController.TAG, "recovery quiet period — dropped: \"$t\"")
+                return ""
+            }
             Log.i(StrikeVoiceController.TAG, "intent unparsed (hadWake=$hadWake): \"$t\" — recovering")
             return recoverOrClarify(t, raw, hindi)
         }
@@ -524,44 +546,56 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
             "Known apps: whatsapp. If it is a question or chit-chat, use {\"action\":\"none\"}. " +
             "Unknown slots: \"?\". Reply ONLY the JSON, no other words. " +
             "Transcript: \"$t\""
-        try {
-            askServerRaw(prompt)?.let { resp ->
-                val rec = IntentParser.parseRecoveryJson(resp) ?: return@let
-                if (rec.action == "open" && rec.app != null) {
-                    val label = rec.app.replaceFirstChar { it.uppercase() }
-                    return if (launch(appPkg(rec.app))) "$label is open."
-                    else "I couldn't open $label."
-                }
-                if (rec.action == "message") {
-                    if (rec.recipient != null) {
-                        val r = ContactResolver.resolve(ctx, rec.recipient)
-                        val name = r.name
-                        if (r.error == null && name != null) {
-                            val pend = IntentParser.MsgIntent("message", rec.app, name, rec.message)
-                            if (pend.complete) return runPlanner(
-                                "open ${rec.app ?: "app"} and message $name ${rec.message ?: ""}".trim())
-                            PendingTask.set(pend)
-                            return IntentParser.clarify(pend, hindi)
-                        }
-                        // recipient not a contact: do NOT invent — clarify
-                        val pend = IntentParser.MsgIntent("message", rec.app, null, rec.message)
-                        PendingTask.set(pend)
-                        return IntentParser.clarify(pend, hindi)
-                    }
-                    if (rec.app != null || rec.message != null) {
-                        val pend = IntentParser.MsgIntent("message", rec.app, null, rec.message)
-                        PendingTask.set(pend)
-                        return IntentParser.clarify(pend, hindi)
-                    }
-                }
+        val resp = try { askServerRaw(prompt) } catch (_: Exception) { null }
+        val rec = resp?.let { IntentParser.parseRecoveryJson(it) }
+        if (resp != null && rec == null) {
+            // LLM explicitly found no command (chit-chat/lyrics/song):
+            // silent + quiet period. (resp==null means LLM unreachable,
+            // which is transient -> spoken clarification below.)
+            lastRecoveryNoneMs = System.currentTimeMillis()
+            Log.i(StrikeVoiceController.TAG, "recovery none — silent")
+            return ""
+        }
+        if (rec != null) {
+            if (rec.action == "open" && rec.app != null) {
+                val label = rec.app.replaceFirstChar { it.uppercase() }
+                return if (launch(appPkg(rec.app))) "$label is open."
+                else "I couldn't open $label."
             }
-        } catch (_: Exception) { }
-        // recovery failed or found nothing: ask WITH the transcript shown
+            if (rec.action == "message") {
+                if (rec.recipient != null) {
+                    val r = ContactResolver.resolve(ctx, rec.recipient)
+                    val name = r.name
+                    if (r.error == null && name != null) {
+                        val pend = IntentParser.MsgIntent("message", rec.app, name, rec.message)
+                        if (pend.complete) return runPlanner(
+                            "open ${rec.app ?: "app"} and message $name ${rec.message ?: ""}".trim())
+                        PendingTask.set(pend)
+                        return IntentParser.clarify(pend, hindi)
+                    }
+                    // recipient not a contact: do NOT invent — clarify
+                    val pend = IntentParser.MsgIntent("message", rec.app, null, rec.message)
+                    PendingTask.set(pend)
+                    return IntentParser.clarify(pend, hindi)
+                }
+                if (rec.app != null || rec.message != null) {
+                    val pend = IntentParser.MsgIntent("message", rec.app, null, rec.message)
+                    PendingTask.set(pend)
+                    return IntentParser.clarify(pend, hindi)
+                }
+                // message action with zero usable slots: same as none
+                lastRecoveryNoneMs = System.currentTimeMillis()
+                Log.i(StrikeVoiceController.TAG, "recovery empty — silent")
+                return ""
+            }
+        }
+        // LLM unreachable: ask WITH the transcript shown (may work on retry)
         return if (hindi) "Maine suna: “$heard” — kya karna hai, dobara bolo?"
         else "I heard: “$heard” — what should I do?"
     }
 
-    private fun runPlanner(text: String): String {        return try {
+    private fun runPlanner(text: String): String {
+        return try {
             ConversationManager.setTask(ctx, text)
             StrikeAgent.stopRequested = false // fresh run clears a stale Stop press
             StrikeAgent(ctx).run(text)
