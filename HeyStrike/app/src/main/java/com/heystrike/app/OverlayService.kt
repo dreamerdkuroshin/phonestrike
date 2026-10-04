@@ -177,6 +177,8 @@ class OverlayService : Service() {
         speaking = false
         armWatchdog(90_000) // answers live up to ~90s; still never permanent
         Log.i(TAG, "agent started")
+        val t0 = System.currentTimeMillis()
+        var firstTokenAt = 0L
         Thread {
             // first speak() before onInit = silent answer — wait here (bg thread)
             var guard = 0
@@ -198,6 +200,19 @@ class OverlayService : Service() {
             api.handleStream(text,
                 onToken = { tok ->
                     if (myGen != gen) return@handleStream
+                    if (firstTokenAt == 0L) {
+                        firstTokenAt = System.currentTimeMillis()
+                        // stale turn: the answer took so long the user moved
+                        // on (e.g. left Reels minutes ago) — speaking it now
+                        // is wrong-time audio, so die quietly instead
+                        if (firstTokenAt - t0 > 90_000) {
+                            Log.i(TAG, "stale turn (>90s to first token) — dropped, not spoken")
+                            gen++ // invalidate: later tokens must not revive this turn
+                            hide()
+                            stopSelf()
+                            return@handleStream
+                        }
+                    }
                     full.append(tok)
                     pending.append(tok)
                     (root as? SiriOrbView)?.setText("“$text”\n\n$full")
