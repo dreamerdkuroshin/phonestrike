@@ -27,6 +27,27 @@ class StrikeAgent(private val ctx: Context) {
         /** UI Stop button: set true to abort between rounds/steps. */
         @Volatile
         var stopRequested = false
+
+        /** Dedupe key for one executed tool call (case-blind tool name). */
+        fun dedupeKey(name: String, arg: String) = "${name.lowercase()}|${arg.trim()}"
+
+        /**
+         * Completed steps from ConversationManager tool lines
+         * ("tap(Send) -> ok: tapped Send") become done-seeds so a resumed
+         * run never re-executes them — the 4×-send class of bug.
+         * Pure function, unit-tested.
+         */
+        fun parseDoneSeeds(lines: List<String>): Set<String> {
+            val out = mutableSetOf<String>()
+            for (line in lines) {
+                val m = Regex("""^(\w+)\((.*)\)\s*->\s*ok""").find(line.trim())
+                if (m != null) out.add(dedupeKey(m.groupValues[1], m.groupValues[2]))
+            }
+            return out
+        }
+
+        /** Tools that must never repeat identically inside one run. */
+        val MUTATING = setOf("tap", "type", "enter", "swipeup", "swipedown", "back", "home")
     }
 
     // ---------- ObserveScreen: compact UI tree ----------
@@ -191,12 +212,14 @@ Messaging: "message <words> to <name>" means find <name>'s chat, then type(<word
 Screen now:
 """.trimIndent()
 
-    fun run(goal: String): String {
+    fun run(goal: String, prior: String = "", seeds: Set<String> = emptySet()): String {
         if (StrikeAccessibilityService.instance == null)
             return "Enable Strike Tap in Accessibility settings first (button 7), then retry."
         val log = StringBuilder()
+        if (prior.isNotBlank()) log.append(prior.trim()).append("\n")
+        val done = seeds.toMutableSet()
         var screen = observe()
-        var drafted = false // a type() draft exists — enter() would submit it
+        var drafted = false // a type() draft exists - enter() would submit it
         repeat(8) { round ->
             if (stopRequested) return "Stopped."
             val reply = askQwen(sys + screen, "Goal: $goal\nDone so far:\n$log")
@@ -217,6 +240,15 @@ Screen now:
                 if (stopRequested) return "Stopped."
                 if (name.equals("done", true)) return arg.ifBlank { plain }.take(500)
                 val cleanArg = arg.trim('\'', '"', ' ')
+                // no-repeat guard: a mutating tool that already succeeded
+                // must never run again (the 4x-send class) — tell the planner
+                // to verify or finish instead
+                if (name.lowercase() in MUTATING && dedupeKey(name, cleanArg) in done) {
+                    val res = "already-done: $name($cleanArg) succeeded earlier — verify it or done(), do NOT repeat"
+                    log.append("$name($arg) -> $res\n")
+                    ConversationManager.recordToolResult(ctx, "$name($arg) -> $res")
+                    break
+                }
                 // spec 16/32: HITL barrier — never tap send/delete/pay unconfirmed
                 val level = AgentPermissions.levelFor(name, cleanArg, drafted)
                 if (level != AgentPermissions.Level.SAFE) {
@@ -227,6 +259,9 @@ Screen now:
                 val res = tool(name, cleanArg)
                 log.append("$name($arg) -> $res\n")
                 ConversationManager.recordToolResult(ctx, "$name($arg) -> $res")
+                if (res.startsWith("ok") && name.lowercase() in MUTATING) {
+                    done.add(dedupeKey(name, cleanArg))
+                }
                 if (name.equals("type", true) && res.startsWith("ok")) drafted = true
                 if (name.equals("enter", true)) drafted = false
                 // verify-after-act: a failed step ends the round — the next

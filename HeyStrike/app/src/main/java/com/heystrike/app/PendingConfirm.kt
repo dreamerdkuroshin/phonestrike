@@ -82,11 +82,20 @@ object PendingConfirm {
     }
 
     private fun execute(ctx: Context, p: Pending): String {
+        // capture the plan BEFORE clear() wipes it: a mid-plan confirm must
+        // resume the planner afterwards, or every retry restarts from zero
+        // and re-taps Send (the duplicate-send class)
+        val taskBefore = ConversationManager.activeTask(ctx)
+        val stepsBefore = ConversationManager.toolSteps(ctx)
         clear(ctx)
         return try {
             val res = StrikeAgent(ctx).tool(p.tool, p.arg)
-            if (res.startsWith("ok")) "Done — tapped ${p.arg}."
-            else "Failed — $res"
+            if (!res.startsWith("ok")) return "Failed — $res"
+            if (taskBefore.isNotBlank() && stepsBefore.isNotEmpty()) {
+                return StrikeApi.continueAfterConfirm(
+                    ctx, taskBefore, stepsBefore, "${p.tool}(${p.arg}) -> $res")
+            }
+            "Done — tapped ${p.arg}."
         } catch (e: Exception) {
             "Confirmation failed: ${e.message}"
         }

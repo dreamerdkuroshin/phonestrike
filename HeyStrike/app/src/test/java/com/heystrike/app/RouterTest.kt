@@ -45,8 +45,7 @@ class RouterTest {
     }
 
     @Test
-    fun modelIntegrity() {
-        val dir = createTempDir("model")
+    fun modelIntegrity() {        val dir = createTempDir("model")
         try {
             // empty dir: not ready (would have native-crashed the gate before)
             assertFalse(ModelManager.verifyFiles(dir, ModelManager.voskRequired()))
@@ -94,5 +93,26 @@ class RouterTest {
         } finally {
             dir.deleteRecursively()
         }
+    }
+
+    @Test
+    fun sendDedupe() {
+        // tool log lines with ok results become done-seeds
+        val seeds = StrikeAgent.parseDoneSeeds(listOf(
+            "tap(Send) -> ok: tapped Send",
+            "launch(com.whatsapp) -> ok: launched whatsapp",
+            "tap(Search) -> fail: 'Search' not on screen",
+            "verify(hi) -> not-verified: 'hi' missing — replan",
+            "type(hello)"
+        ))
+        assertTrue(seeds.contains(StrikeAgent.dedupeKey("tap", "Send")))
+        assertTrue(seeds.contains(StrikeAgent.dedupeKey("launch", "com.whatsapp")))
+        // fails must NOT seed (retry allowed)
+        assertFalse(seeds.any { it.startsWith("tap|Search") })
+        assertFalse(seeds.any { it.startsWith("verify|") })
+        // key normalizes case/space so variants still match
+        assertEquals(
+            StrikeAgent.dedupeKey("tap", "Send"),
+            StrikeAgent.dedupeKey("TAP", "  Send "))
     }
 }

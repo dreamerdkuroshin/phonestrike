@@ -152,6 +152,31 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
     }
 
     companion object {
+        /**
+         * Resume a planner interrupted by a HITL confirm: re-run with the
+         * completed steps as done-seeds so nothing executes twice.
+         */
+        fun continueAfterConfirm(
+            ctx: Context,
+            goal: String,
+            steps: List<String>,
+            justDid: String
+        ): String {
+            return try {
+                ConversationManager.setTask(ctx, goal)
+                StrikeAgent.stopRequested = false
+                val prior = "Already completed this run (DO NOT redo):\n" +
+                    (steps.takeLast(8) + justDid).joinToString("\n")
+                StrikeAgent(ctx).run(
+                    goal, prior,
+                    StrikeAgent.parseDoneSeeds(steps.takeLast(8) + justDid))
+            } catch (e: Exception) {
+                "Planner failed: ${e.message}"
+            } finally {
+                if (PendingConfirm.active() == null) ConversationManager.clearTask(ctx)
+            }
+        }
+
         private val contactVerbs = listOf("message", "text", "call", "whatsapp")
 
         /** Emergency-stop utterances (spec 58) — handled at runtime, not by the LLM. */
