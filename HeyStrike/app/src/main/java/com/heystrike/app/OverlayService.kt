@@ -344,9 +344,9 @@ class SiriOrbView(c: Context, onTap: () -> Unit) : FrameLayout(c) {
         setBackgroundColor(0x00000000)
         val d = resources.displayMetrics.density
         // Gemini-style: medium orb docked near the bottom, halo behind it
-        val orbPx = (150 * d).toInt()
-        val glowPx = (230 * d).toInt()
-        val baseMargin = (100 * d).toInt()
+        val orbPx = (110 * d).toInt()
+        val glowPx = (170 * d).toInt()
+        val baseMargin = (120 * d).toInt()
         val glowLp = LayoutParams(glowPx, glowPx, Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM)
         glowLp.bottomMargin = baseMargin - (glowPx - orbPx) / 2
         addView(glow, glowLp)
@@ -394,13 +394,13 @@ class SiriOrbView(c: Context, onTap: () -> Unit) : FrameLayout(c) {
             shape = android.graphics.drawable.GradientDrawable.OVAL
             colors = core
             gradientType = android.graphics.drawable.GradientDrawable.RADIAL_GRADIENT
-            gradientRadius = 75 * d
+            gradientRadius = 55 * d
         }
         glow.background = android.graphics.drawable.GradientDrawable().apply {
             shape = android.graphics.drawable.GradientDrawable.OVAL
             colors = intArrayOf(core[1], 0x00000000)
             gradientType = android.graphics.drawable.GradientDrawable.RADIAL_GRADIENT
-            gradientRadius = 115 * d
+            gradientRadius = 85 * d
         }
         // pulse follows the state: idle breathe, busy shimmer
         startPulse(when (mode) {
