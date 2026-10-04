@@ -43,12 +43,20 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         val hadWake = t != norm
         val hindi = Prefs.voiceLang(ctx) == "hi" ||
             text.any { it.code in 0x0900..0x0AFF }
+        // typed input never passes the gate: authorize it here. Voice turns
+        // arrive already authorized (WAKE/GESTURE from the trigger).
+        if (VoiceAuth.source == VoiceAuth.Source.NONE) {
+            VoiceAuth.authorize(VoiceAuth.Source.TYPED)
+        }
+        Log.i(StrikeVoiceController.TAG,
+            "turn hadWake=$hadWake ${VoiceAuth.snapshot()} text=\"${t.take(80)}\"")
         // HITL confirmation release ("yes"/"no"/"haan") — before every other route
         PendingConfirm.consume(t, ctx)?.let { return it }
         // runtime emergency stop (spec 58): never depends on the LLM obeying
         if (t in stopWords) {
             StrikeAgent.stopRequested = true
             PendingConfirm.clear(ctx)
+            VoiceAuth.revoke()
             return "Stopped."
         }
         // clarification-task follow-up ("haan" / slot fills) — before contact routes
@@ -65,7 +73,10 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         if (t.isBlank() || (hadWake && WakeMatcher.stripWake(t).isBlank())) {
             Log.i(StrikeVoiceController.TAG, "turn wake-only/blank hadWake=$hadWake — " +
                 if (hadWake) "dropped silently" else "inviting continuation")
-            if (hadWake) return ""
+            if (hadWake) {
+                VoiceAuth.noteJunkDropped()
+                return ""
+            }
             return if (hindi) "Ji, sun raha hoon — aage bolo?"
             else "Yes? I'm listening — go ahead."
         }
@@ -236,6 +247,11 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         val hadWake = t != norm
         val hindi = Prefs.voiceLang(ctx) == "hi" ||
             text.any { it.code in 0x0900..0x0AFF }
+        if (VoiceAuth.source == VoiceAuth.Source.NONE) {
+            VoiceAuth.authorize(VoiceAuth.Source.TYPED)
+        }
+        Log.i(StrikeVoiceController.TAG,
+            "turn hadWake=$hadWake ${VoiceAuth.snapshot()} text=\"${t.take(80)}\"")
         // HITL confirmation release ("yes"/"no"/"haan") — before every other route
         PendingConfirm.consume(t, ctx)?.let { ans ->
             onToken(ans)
@@ -246,6 +262,7 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         if (t in stopWords) {
             StrikeAgent.stopRequested = true
             PendingConfirm.clear(ctx)
+            VoiceAuth.revoke()
             onToken("Stopped.")
             onDone()
             return
@@ -265,6 +282,7 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
         if (t.isBlank() || (hadWake && WakeMatcher.stripWake(t).isBlank())) {
             Log.i(StrikeVoiceController.TAG, "turn wake-only/blank hadWake=$hadWake — " +
                 if (hadWake) "dropped silently" else "inviting continuation")
+            if (hadWake) VoiceAuth.noteJunkDropped()
             if (!hadWake) {
                 onToken(if (hindi) "Ji, sun raha hoon — aage bolo?"
                 else "Yes? I'm listening — go ahead.")
@@ -478,9 +496,11 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
             // pass through here, so real commands still work.
             if (System.currentTimeMillis() - lastRecoveryNoneMs < 60_000) {
                 Log.i(StrikeVoiceController.TAG, "recovery quiet period — dropped: \"$t\"")
+                VoiceAuth.noteJunkDropped()
                 return ""
             }
             Log.i(StrikeVoiceController.TAG, "intent unparsed (hadWake=$hadWake): \"$t\" — recovering")
+            VoiceAuth.noteRecovery()
             return recoverOrClarify(t, raw, hindi)
         }
         if (intent.action == "open") {

@@ -216,6 +216,9 @@ object StrikeVoiceController {
     }
 
     fun notifyIdle() {
+        // turn fully done: back to passive wake mode (authorization revoked
+        // until the next wake/gesture/typed turn)
+        VoiceAuth.revoke()
         synchronized(lock) {
             if (gate != null && (state == State.PROCESSING || state == State.ASSISTANT_SPEAKING)) {
                 enterCooldownLocked()

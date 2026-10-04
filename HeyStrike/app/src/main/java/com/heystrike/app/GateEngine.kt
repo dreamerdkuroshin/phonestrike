@@ -53,6 +53,12 @@ class GateEngine(
 ) {
     private enum class Phase { WAITING, SPEAKING, POSSIBLE_END, FINALIZED }
 
+    companion object {
+        // wake confirmation: consecutive wake-positive partial frames (~128ms
+        // each). Single-frame TV/music/model blips never reach 2.
+        const val WAKE_MIN_STREAK = 2
+    }
+
     private val running = AtomicBoolean(false)
     private var thread: Thread? = null
     private var audio: AudioRecord? = null
@@ -173,7 +179,7 @@ class GateEngine(
                 // streak counts consecutive wake-positive frames for BOTH
                 // trigger paths below (single-frame TV blips must not fire)
                 if (wake) wakeStreak++ else wakeStreak = 0
-                val wakeHeld = wake && wakeStreak >= 2
+                val wakeHeld = wake && wakeStreak >= WAKE_MIN_STREAK
 
                 // ---- barge-in: user speaks while Strike is answering ----
                 val speakingNow =
@@ -196,7 +202,8 @@ class GateEngine(
 
                 if (speakingNow && (wakeHeld || barge)) {
                     Log.i(StrikeVoiceController.TAG,
-                        "barge-in (wake=$wake energy=$barge) — stopping TTS, capturing turn")
+                        "barge-in (wake=$wake energy=$barge) — stopping TTS, capturing turn " +
+                            "[${VoiceAuth.snapshot()}]")
                     commandRequested = false
                     wakeStreak = 0
                     barFrames = 0
@@ -224,6 +231,13 @@ class GateEngine(
                 // it is never suppressed by the wake cooldown
                 if (wakeHeld || commandRequested) {
                     wakeStreak = 0
+                    // authoritative authorization: everything downstream
+                    // (command ASR, LLM, agent, tools, TTS answers) runs only
+                    // from here, an explicit gesture, or typed input
+                    VoiceAuth.authorize(
+                        if (wakeHeld) VoiceAuth.Source.WAKE else VoiceAuth.Source.GESTURE)
+                    Log.i(StrikeVoiceController.TAG,
+                        "wake trigger: ${VoiceAuth.snapshot()}")
                     commandRequested = false
                     // snapshot the tail BEFORE live reading resumes
                     val tail = ring.tail()
