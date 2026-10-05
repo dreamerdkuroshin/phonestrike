@@ -86,6 +86,22 @@ def test_tasks_list(tmp_path, monkeypatch):
     assert c.get("/api/tasks").get_json() == []
 
 
+def test_chat_serves_mobile_intents(tmp_path, monkeypatch):
+    """Inverted-guard regression: /chat must serve mobile matches itself,
+    not send 'battery status' to the LLM."""
+    c = _iso(tmp_path, monkeypatch)
+    r = c.post("/chat", json={"message": "battery status"})
+    assert r.status_code == 200
+    assert "🔋" in r.get_json()["response"]
+
+
+def test_voice_command_serves_mobile_intents(tmp_path, monkeypatch):
+    c = _iso(tmp_path, monkeypatch)
+    r = c.post("/api/voice/command", json={"text": "battery status"})
+    assert r.status_code == 200
+    assert "🔋" in r.get_json()["response"]
+
+
 def test_journal_survives(tmp_path, monkeypatch):
     _iso(tmp_path, monkeypatch)
     t = {"id": "abc123", "state": "CREATED", "log": ["hi"],

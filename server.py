@@ -44,8 +44,6 @@ def _sec_headers(resp):
 # --- route guards (kept verbatim from the monolith per endpoint) ---
 _JARVIS_API = ("run ", "switch to ", "list ", "launch ", "start ", "stop ", "status", "check ", "help", "?", "draw ", "generate image", "current model", "omniroute ", "restart strike", "open ", "call ", "battery", "torch", "flashlight", "volume", "search ", "google ", "navigate ")
 _JARVIS_CHAT = ("run ", "switch to ", "list ", "launch ", "start rehan", "start isair", "stop ", "status", "check ", "help")
-_MOB_CHAT = ("run ", "switch to ", "list ", "launch ", "start ", "stop ", "status", "check ", "help", "?", "draw ", "generate image", "current model", "omniroute ", "restart strike", "open ", "call ", "battery", "torch", "flashlight", "volume", "search ", "google ", "navigate ", "time", "date")
-_MOB_VOICE = ("run ", "switch to ", "list ", "launch ", "start ", "stop ", "status", "check ", "help", "?", "draw ", "generate image", "current model", "omniroute ", "restart strike", "open ", "call ", "battery", "torch", "flashlight", "volume", "search ", "google ", "navigate ")
 
 
 @app.route('/')
@@ -62,9 +60,14 @@ def chat():
         if not user_message:
             return jsonify({"error": "Empty message"}), 400
 
-        # Mobile intents first (open app, battery, torch, call, search...)
+        # Mobile intents first (open app, battery, torch, call, search...).
+        # Unconditional: the old startswith(_MOB_CHAT) guard contained the
+        # mobile words themselves ("battery", "torch"...), so it skipped
+        # EVERY mobile match and sent it to the LLM. Jarvis still gets its
+        # turn below for prefixes it owns; project names already return
+        # None from the mobile matcher.
         mob = intents.handle_mobile_command(user_message)
-        if mob is not None and not user_message.lower().startswith(_MOB_CHAT):
+        if mob is not None:
             # handle_mobile returns greeting for bare wake word too
             if not mob.startswith("❓"):
                 return jsonify({"response": mob})
@@ -175,9 +178,11 @@ def api_chat():
         if not last_user:
             return "Empty message", 400
         if not raw:
-            # mobile first
+            # mobile first, unconditional (same inverted-guard bug as /chat:
+            # _MOB_VOICE contained the mobile words, muting every instant
+            # intent on the app's main route)
             mob = intents.handle_mobile_command(last_user)
-            if mob is not None and not last_user.lower().startswith(_MOB_VOICE):
+            if mob is not None:
                 if not mob.startswith("❓"):
                     if config.get().get("voice_enabled"):
                         try:
