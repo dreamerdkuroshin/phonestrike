@@ -40,7 +40,11 @@ class OverlayService : Service() {
             if (st == TextToSpeech.SUCCESS) {
                 // Hindi/Hinglish answers speak Hindi; else US English.
                 // Missing voice data must fall back, never go silent.
-                val want = if (Prefs.voiceLang(this) == "hi") Locale("hi") else Locale.US
+                val want = when (Prefs.voiceLang(this)) {
+                    "hi" -> Locale("hi")
+                    "gu" -> Locale("gu")
+                    else -> Locale.US
+                }
                 tts?.language = want
                 if (tts?.isLanguageAvailable(want) ?: -1 < 0) tts?.language = Locale.US
                 tts?.setOnUtteranceProgressListener(object :

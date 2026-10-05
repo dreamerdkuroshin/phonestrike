@@ -184,11 +184,18 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<Button>(R.id.testBtn).setOnClickListener { micTest() }
         findViewById<Button>(R.id.ttsBtn).setOnClickListener { ttsTest() }
         findViewById<Button>(R.id.langBtn).setOnClickListener {
-            val next = if (Prefs.voiceLang(this) == "hi") "en" else "hi"
+            val next = when (Prefs.voiceLang(this)) {
+                "en" -> "hi"
+                "hi" -> "gu"
+                else -> "en"
+            }
             Prefs.setVoiceLang(this, next)
             refreshLangRow()
             if (next == "hi" && !ModelManager.hiReady(this)) {
                 Toast.makeText(this, "Downloading Hindi voice model (~50MB)…", Toast.LENGTH_SHORT).show()
+                downloadModels()
+            } else if (next == "gu" && !ModelManager.whisperReady(this)) {
+                Toast.makeText(this, "Downloading whisper multilingual (~75MB)…", Toast.LENGTH_SHORT).show()
                 downloadModels()
             } else {
                 Toast.makeText(this, "Tap Start to apply the new language", Toast.LENGTH_SHORT).show()
@@ -216,8 +223,11 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun refreshLangRow() {
-        findViewById<TextView>(R.id.langStatus).text =
-            if (Prefs.voiceLang(this) == "hi") "Hindi / Hinglish" else "English"
+        findViewById<TextView>(R.id.langStatus).text = when (Prefs.voiceLang(this)) {
+            "hi" -> "Hindi / Hinglish"
+            "gu" -> "Gujarati (whisper, testing)"
+            else -> "English"
+        }
         OverlayService.lastTtsError?.let {
             findViewById<TextView>(R.id.ttsStatus).text = it
         }
@@ -373,6 +383,13 @@ class SettingsActivity : AppCompatActivity() {
                         runOnUiThread {
                             modelProgress.text =
                                 "Hindi: ${done / 1048576}MB / ${total / 1048576}MB"
+                        }
+                    }
+                } else if (lang == "gu") {
+                    ModelManager.downloadWhisper(this) { done, total ->
+                        runOnUiThread {
+                            modelProgress.text =
+                                "Whisper: ${done / 1048576}MB / ${total / 1048576}MB"
                         }
                     }
                 } else {

@@ -44,7 +44,7 @@ class VoiceService : Service() {
             return // notification already says why
         }
 
-        if (!shell && Prefs.voiceLang(this) != "hi" && !ModelManager.sherpaReady(this)) {
+        if (!shell && Prefs.voiceLang(this) == "en" && !ModelManager.sherpaReady(this)) {
             // background: streaming command model; first command uses Vosk fallback
             Thread {
                 try {

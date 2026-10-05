@@ -41,6 +41,9 @@ class GateEngine(
     private val modelDir: String,
     private val sherpaDir: String?,
     private val wakeWords: List<String> = listOf("hey strike"),
+    private val whisperDir: String? = null,
+    private val useWhisper: Boolean = false,
+    private val whisperLang: String = "en",
     private val assets: android.content.res.AssetManager? = null,
     private val onReady: () -> Unit = {},
     private val onWake: () -> Unit,
@@ -271,8 +274,57 @@ class GateEngine(
             } catch (_: Exception) {}
         }
         onWake()
-        if (!trySherpaCommand(tail)) voskCommand(tail)
+        if (useWhisper && whisperDir != null) whisperCommand(tail, whisperDir, whisperLang)
+        else if (!trySherpaCommand(tail)) voskCommand(tail)
         ring.clear()
+    }
+
+    // ------------------------------------------------------------------
+    // Multilingual command ASR: whisper-tiny offline (Gujarati/Hindi).
+    // Buffers the utterance with the same endpointing as streaming, then
+    // decodes once. No per-frame partials — onPartial stays quiet here.
+    // ------------------------------------------------------------------
+    private fun whisperCommand(tail: ByteArray, dir: String, lang: String) {
+        val all = java.io.ByteArrayOutputStream()
+        if (tail.isNotEmpty()) all.write(tail)
+        StrikeVoiceController.noteCommandListening()
+        val buf = ByteArray(4096)
+        var deadline = System.currentTimeMillis() + 15_000
+        var speechStarted = false
+        var silenceSince = 0L
+        while (running.get() && System.currentTimeMillis() < deadline) {
+            val n = audio?.read(buf, 0, buf.size) ?: -1
+            if (n <= 0) {
+                if (n < 0) Thread.sleep(50)
+                continue
+            }
+            all.write(buf, 0, n)
+            if (all.size() > 16000 * 2 * 30) break // 30s RAM cap
+            if (!speechStarted) {
+                if (rms(buf, n) > 0.02) {
+                    speechStarted = true
+                    StrikeVoiceController.noteCommandListening()
+                    deadline = System.currentTimeMillis() + 25_000
+                    silenceSince = System.currentTimeMillis()
+                }
+            } else {
+                if (rms(buf, n) > 0.02) silenceSince = System.currentTimeMillis()
+                else if (System.currentTimeMillis() - silenceSince > 1400) break
+            }
+        }
+        StrikeVoiceController.noteFinalized()
+        if (!speechStarted) {
+            onCommand("")
+            return
+        }
+        val text = WhisperDecode.decode(dir, assets, all.toByteArray(), lang)
+        if (text.isNullOrBlank()) {
+            Log.e(StrikeVoiceController.TAG, "whisper empty — command lost")
+            onCommand("")
+            return
+        }
+        Log.i(StrikeVoiceController.TAG, "command final (whisper/$lang): \"$text\"")
+        onCommand(text)
     }
 
     // ------------------------------------------------------------------

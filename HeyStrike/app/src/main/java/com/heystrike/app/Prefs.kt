@@ -22,7 +22,8 @@ object Prefs {
             .putBoolean("alwaysListen", v).apply()
     }
 
-    /** Voice language: "en" (default) or "hi" (Hindi/Hinglish ASR + TTS).
+    /** Voice language: "en" (default), "hi" (Hindi/Hinglish), "gu"
+     *  (Gujarati via whisper-tiny, UNVERIFIED decode).
      *  Gujarati/Hinglish in Latin script needs no model switch — the English
      *  ASR transcribes Latin script and the LLM understands it. */
     fun voiceLang(c: Context): String =
@@ -30,6 +31,6 @@ object Prefs {
 
     fun setVoiceLang(c: Context, v: String) {
         c.getSharedPreferences(F, Context.MODE_PRIVATE).edit()
-            .putString("voiceLang", if (v == "hi") "hi" else "en").apply()
+            .putString("voiceLang", if (v == "hi") "hi" else if (v == "gu") "gu" else "en").apply()
     }
 }

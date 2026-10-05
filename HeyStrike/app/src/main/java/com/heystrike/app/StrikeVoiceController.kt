@@ -49,6 +49,8 @@ object StrikeVoiceController {
     private var onErrorCb: ((String) -> Unit)? = null
     private var modelPath = ""
     private var sherpaPath: String? = null
+    private var whisperPath: String? = null
+    private var whisperLang = "en"
     private var appCtx: Context? = null
 
     // Latency stamps (uptime ms): T0 wake, T1 command listening, T2 finalized,
@@ -113,12 +115,17 @@ object StrikeVoiceController {
         // Hindi mode: Vosk-hi does wake (constrained grammar) + commands;
         // the English sherpa command model would garbage-decode Hindi, so
         // sherpaPath=null falls the command stage back to Vosk-hi.
-        val hi = Prefs.voiceLang(ctx.applicationContext) == "hi" &&
-            ModelManager.hiReady(ctx.applicationContext)
+        // Gujarati mode: wake stays English-Vosk ("hey strike" is said in
+        // English); commands go to whisper-tiny multilingual (offline).
+        val lang = Prefs.voiceLang(ctx.applicationContext)
+        val hi = lang == "hi" && ModelManager.hiReady(ctx.applicationContext)
+        val gu = lang == "gu" && ModelManager.whisperReady(ctx.applicationContext)
         modelPath = (if (hi) ModelManager.hiDir(ctx.applicationContext)
         else ModelManager.dir(ctx.applicationContext)).absolutePath
-        sherpaPath = if (hi) null
+        sherpaPath = if (hi || gu) null
         else ModelManager.sherpaDir(ctx.applicationContext).absolutePath
+        whisperPath = if (gu) ModelManager.whisperDir(ctx.applicationContext).absolutePath else null
+        whisperLang = lang
         appCtx = ctx.applicationContext
         onWakeCb = onWake
         onCommandCb = onCommand
@@ -252,6 +259,9 @@ object StrikeVoiceController {
     private fun newGate() = GateEngine(
         modelDir = modelPath,
         sherpaDir = sherpaPath,
+        whisperDir = whisperPath,
+        useWhisper = whisperPath != null,
+        whisperLang = whisperLang,
         // Hindi model decodes the English wake as Devanagari ("हे स्ट्राइक",
         // seen verbatim on-device) — constrain to the native phrase there.
         wakeWords = if (modelPath.contains("small-hi")) listOf("हे स्ट्राइक")

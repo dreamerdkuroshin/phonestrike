@@ -45,17 +45,20 @@ object AsrRouter {
 
 /** Gujarati model slot: path reserved, no upstream artifact yet. */
 object GuModel {
-    // whisper-multilingual via sherpa-offline is the candidate path when the
-    // device half (download + offline decode + RAM) is actually tested.
-    // const disallows null: plain val documents the missing artifact.
-    val EXPECTED_URL: String? = null
+    // whisper-tiny multilingual (sherpa-onnx offline) covers Gujarati.
+    // UNVERIFIED on-device (needs the download + a Gujarati speaker test);
+    // until then plan("gu") falls back to English and status() says so.
+    const val EXPECTED_URL: String =
+        "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny"
 
-    fun dir(c: Context): java.io.File = java.io.File(c.filesDir, "models/small-gu")
+    fun dir(c: Context): java.io.File = ModelManager.whisperDir(c)
 
-    fun ready(c: Context): Boolean =
-        EXPECTED_URL != null &&
-            java.io.File(dir(c), "am/final.mdl").let { it.isFile && it.length() > 0 }
+    fun ready(c: Context): Boolean = ModelManager.whisperReady(c)
 
-    fun status(): String =
-        "no native Gujarati model upstream — Latin-script Gujarati via English ASR + LLM"
+    /** Pure status text (JVM-tested); status() feeds it live readiness. */
+    fun statusText(ready: Boolean): String = if (ready)
+        "whisper-tiny multilingual ready (UNVERIFIED decode - needs Gujarati speaker test)"
+    else "whisper-tiny not downloaded - Gujarati falls back to English ASR + LLM"
+
+    fun status(c: Context): String = statusText(ready(c))
 }

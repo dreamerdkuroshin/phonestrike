@@ -29,9 +29,11 @@ class RouterTest {
 
     @Test
     fun guSlotHonest() {
-        // no upstream artifact: never reports ready, says why
-        assertNull(GuModel.EXPECTED_URL)
-        assertTrue(GuModel.status().contains("no native Gujarati model"))
+        // whisper-tiny multilingual is the real Gujarati path (UNVERIFIED
+        // decode until a Gujarati speaker tests it on-device)
+        assertTrue(GuModel.EXPECTED_URL.contains("whisper-tiny"))
+        assertTrue(GuModel.statusText(false).contains("falls back"))
+        assertTrue(GuModel.statusText(true).contains("UNVERIFIED"))
     }
 
     @Test

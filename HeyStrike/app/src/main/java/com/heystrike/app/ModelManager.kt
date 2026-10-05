@@ -90,8 +90,60 @@ object ModelManager {
     fun hiReady(c: Context): Boolean = verifyFiles(hiDir(c), voskRequired("hi"))
 
     /** Model required for the given language pref. */
-    fun readyFor(c: Context, lang: String): Boolean =
-        if (lang == "hi") hiReady(c) else ready(c)
+    fun readyFor(c: Context, lang: String): Boolean = when (lang) {
+        "hi" -> hiReady(c)
+        "gu" -> whisperReady(c)
+        else -> ready(c)
+    }
+
+    // ---------- whisper-tiny multilingual (sherpa-onnx offline) ----------
+    // csukuangfj/sherpa-onnx-whisper-tiny — covers Gujarati+Hindi+English.
+    // OFFLINE (utterance-at-once, not streaming): the gate buffers the
+    // command then decodes once. Evaluated alternatives, rejected:
+    // IndicConformer monolinguals are NeMo-only (no phone runtime);
+    // 600M multilingual needs custom code + ~10x the RAM. Parler-TTS 0.9B
+    // and IndicF5 likewise exceed the 4GB budget — Android TTS stays.
+    private const val WHISPER_REPO = "csukuangfj/sherpa-onnx-whisper-tiny"
+    private val WHISPER_FILES = mapOf(
+        "tiny-encoder.int8.onnx" to 10_000_000L,
+        "tiny-decoder.int8.onnx" to 10_000_000L,
+        "tiny-tokens.txt" to 1_000L
+    )
+
+    fun whisperDir(c: Context): File = File(c.filesDir, "models/whisper-tiny")
+
+    fun whisperReady(c: Context): Boolean =
+        WHISPER_FILES.all { (f, min) -> File(whisperDir(c), f).let { it.isFile && it.length() >= min } }
+
+    fun downloadWhisper(
+        c: Context,
+        onProgress: (done: Long, total: Long) -> Unit
+    ) = downloadLock.withLock {
+        val out = whisperDir(c).apply { mkdirs() }
+        val bases = listOf(
+            "https://huggingface.co/",
+            "https://hf-mirror.com/"
+        )
+        for (name in WHISPER_FILES.keys) {
+            val dest = File(out, name)
+            if (dest.length() > 0) continue
+            val part = File(out, "$name.part")
+            var ok = false
+            for (base in bases) {
+                val url = "$base$WHISPER_REPO/resolve/main/$name"
+                try {
+                    fetchTo(url, part, onProgress)
+                    if (part.length() > 0) {
+                        part.renameTo(dest)
+                        ok = dest.length() > 0
+                    }
+                    if (ok) break
+                } catch (_: Exception) { part.delete() }
+            }
+            if (!ok) throw RuntimeException("whisper model download failed: $name")
+        }
+        if (!whisperReady(c)) throw RuntimeException("whisper model verify failed")
+    }
 
     fun downloadHi(c: Context, onProgress: (done: Long, total: Long) -> Unit) =
         downloadZip(HI_URL, hiDir(c).apply { mkdirs() }, "vosk-model-hi.zip", c, onProgress).also {
