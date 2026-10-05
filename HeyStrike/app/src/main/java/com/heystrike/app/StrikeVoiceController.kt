@@ -51,6 +51,9 @@ object StrikeVoiceController {
     private var sherpaPath: String? = null
     private var whisperPath: String? = null
     private var whisperLang = "en"
+    // primary whisper commands ONLY in gu mode; every mode gets whisper
+    // as the second-pass engine once its files exist
+    private var whisperPrimary = false
     private var appCtx: Context? = null
 
     // Latency stamps (uptime ms): T0 wake, T1 command listening, T2 finalized,
@@ -117,6 +120,8 @@ object StrikeVoiceController {
         // sherpaPath=null falls the command stage back to Vosk-hi.
         // Gujarati mode: wake stays English-Vosk ("hey strike" is said in
         // English); commands go to whisper-tiny multilingual (offline).
+        // Second-pass re-decode is available in EVERY language once the
+        // whisper files exist (it only fires on wake-only transcripts).
         val lang = Prefs.voiceLang(ctx.applicationContext)
         val hi = lang == "hi" && ModelManager.hiReady(ctx.applicationContext)
         val gu = lang == "gu" && ModelManager.whisperReady(ctx.applicationContext)
@@ -124,7 +129,11 @@ object StrikeVoiceController {
         else ModelManager.dir(ctx.applicationContext)).absolutePath
         sherpaPath = if (hi || gu) null
         else ModelManager.sherpaDir(ctx.applicationContext).absolutePath
-        whisperPath = if (gu) ModelManager.whisperDir(ctx.applicationContext).absolutePath else null
+        whisperPath =
+            if (ModelManager.whisperReady(ctx.applicationContext))
+                ModelManager.whisperDir(ctx.applicationContext).absolutePath
+            else null
+        whisperPrimary = gu
         whisperLang = lang
         appCtx = ctx.applicationContext
         onWakeCb = onWake
@@ -260,7 +269,7 @@ object StrikeVoiceController {
         modelDir = modelPath,
         sherpaDir = sherpaPath,
         whisperDir = whisperPath,
-        useWhisper = whisperPath != null,
+        useWhisper = whisperPrimary,
         whisperLang = whisperLang,
         // Hindi model decodes the English wake as Devanagari ("हे स्ट्राइक",
         // seen verbatim on-device) — constrain to the native phrase there.
