@@ -3,6 +3,7 @@ and nested (legacy openai) formats. Paths are module attributes so tests
 can point them at a tmp dir."""
 import json
 import os
+import threading
 
 CONFIG_PATH = os.path.expanduser("~/PocketStrike-AI/config.json")
 # ponytail: key was hardcoded in source (leaked into git history — rotate it);
@@ -11,6 +12,12 @@ OMNIROUTE_KEY = os.environ.get("OMNIROUTE_KEY", "")
 OMNIROUTE_URL = "http://localhost:20128/v1"
 
 WORKSPACE_DIR = os.path.expanduser("~/PocketStrike-AI")
+
+# Threaded Flask serves requests concurrently: every read of the shared
+# dict and every read-modify-write sequence takes this lock so a POST
+# /config (or model switch) mid-/chat can never expose a half-updated
+# config. RLock: getters call get() while already holding it.
+_lock = threading.RLock()
 
 _config = None
 
@@ -33,19 +40,21 @@ def load():
     """Read config.json (or defaults). A corrupt file must never kill the
     server at boot — fall back to defaults and keep running."""
     global _config
-    try:
-        if os.path.exists(CONFIG_PATH):
-            with open(CONFIG_PATH) as f:
-                _config = json.load(f)
-                return _config
-    except Exception:
-        pass
-    _config = _default()
-    return _config
+    with _lock:
+        try:
+            if os.path.exists(CONFIG_PATH):
+                with open(CONFIG_PATH) as f:
+                    _config = json.load(f)
+                    return _config
+        except Exception:
+            pass
+        _config = _default()
+        return _config
 
 
 def get():
-    return _config if _config is not None else load()
+    with _lock:
+        return _config if _config is not None else load()
 
 
 def ensure_dirs():
@@ -86,43 +95,49 @@ def get_model():
 
 def replace(data):
     """Replace in-memory config AND persist atomically (temp+rename so a
-    crash mid-write can never corrupt config.json)."""
+    crash mid-write can never corrupt config.json). Whole swap under the
+    lock: readers never see a half-written dict."""
     import tempfile
     global _config
-    _config = data
-    d = os.path.dirname(CONFIG_PATH) or "."
-    fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-config-", suffix=".json")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(_config, f, indent=2)
-        os.replace(tmp, CONFIG_PATH)
-    except Exception:
+    with _lock:
+        _config = data
+        d = os.path.dirname(CONFIG_PATH) or "."
+        fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-config-", suffix=".json")
         try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-    return _config
+            with os.fdopen(fd, "w") as f:
+                json.dump(_config, f, indent=2)
+            os.replace(tmp, CONFIG_PATH)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        return _config
 
 
 def ensure_file():
-    if not os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump(get(), f, indent=2)
+    with _lock:
+        if not os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, 'w') as f:
+                json.dump(get(), f, indent=2)
 
 
 def set_model(name):
-    """Switch model in both config formats. Returns (ok, message)."""
+    """Switch model in both config formats. Returns (ok, message).
+    Read-modify-write under one lock hold: two concurrent switches
+    can't interleave into a lost update."""
     try:
-        with open(CONFIG_PATH) as f:
-            cfg = json.load(f)
-        if "model" in cfg or "provider" in cfg:
-            cfg['model'] = name
-        elif isinstance(cfg.get('openai'), dict):
-            cfg['openai']['model'] = name
-        else:
-            cfg['model'] = name
-        replace(cfg)  # atomic persist + in-memory update together
+        with _lock:
+            with open(CONFIG_PATH) as f:
+                cfg = json.load(f)
+            if "model" in cfg or "provider" in cfg:
+                cfg['model'] = name
+            elif isinstance(cfg.get('openai'), dict):
+                cfg['openai']['model'] = name
+            else:
+                cfg['model'] = name
+            replace(cfg)  # atomic persist + in-memory update together
         return True, (f"✅ Switched to model: {name}\n"
                       "🔄 Restart server to apply (or it applies on next chat).")
     except Exception as e:

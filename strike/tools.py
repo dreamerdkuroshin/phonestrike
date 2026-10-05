@@ -110,14 +110,18 @@ def add_server(name, transport="sse", url="", command=""):
     servers = _servers()
     servers.append({"name": name, "transport": transport, "url": url,
                     "command": command, "added_at": int(time.time())})
-    _save(servers)
+    with config._lock:  # read-modify-write as one unit (no lost updates)
+        if any(s.get("name") == name for s in _servers()):
+            return None, "a server with that name already exists"
+        _save(servers)
     return {"status": "connected", "tools_count": tools}, None
 
 
 def remove_server(name):
-    servers = _servers()
-    kept = [s for s in servers if s.get("name") != name]
-    if len(kept) == len(servers):
-        return False
-    _save(kept)
-    return True
+    with config._lock:  # read-modify-write as one unit
+        servers = _servers()
+        kept = [s for s in servers if s.get("name") != name]
+        if len(kept) == len(servers):
+            return False
+        _save(kept)
+        return True
