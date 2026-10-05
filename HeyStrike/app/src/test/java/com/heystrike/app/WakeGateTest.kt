@@ -37,8 +37,7 @@ class WakeGateTest {
     }
 
     @Test
-    fun stormSuppressesThenRecovers() {
-        val g = WakeGate(stormMax = 3, suppressMs = 60_000)
+    fun stormSuppressesThenRecovers() {        val g = WakeGate(stormMax = 3, suppressMs = 60_000)
         var t = 0L
         repeat(3) {
             g.update(true, t); assertTrue(g.update(true, t + 128))
@@ -54,5 +53,21 @@ class WakeGateTest {
         assertFalse(g.update(false, t + 62_000))
         assertFalse(g.update(true, t + 62_128))
         assertTrue(g.update(true, t + 62_256))
+    }
+
+    @Test
+    fun secondPassGate() {
+        // the exact reported failure: wake-only transcript re-decodes
+        assertTrue(GateEngine.needsSecondPass("eyr straik", "sherpa", true))
+        assertTrue(GateEngine.needsSecondPass("air strike", "vosk", true))
+        // silence never re-decodes (whisper hallucinates on noise)
+        assertFalse(GateEngine.needsSecondPass("", "sherpa", true))
+        assertFalse(GateEngine.needsSecondPass("   ", "vosk", true))
+        // whisper's own output is final — no loop
+        assertFalse(GateEngine.needsSecondPass("eyr straik", "whisper", true))
+        // no whisper files: nothing to re-decode with
+        assertFalse(GateEngine.needsSecondPass("eyr straik", "sherpa", false))
+        // real commands pass through untouched
+        assertFalse(GateEngine.needsSecondPass("open whatsapp and message beru", "sherpa", true))
     }
 }

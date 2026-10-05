@@ -60,6 +60,16 @@ class GateEngine(
         // wake confirmation: consecutive wake-positive partial frames (~128ms
         // each). Single-frame TV/music/model blips never reach 2.
         const val WAKE_MIN_STREAK = 2
+
+        /**
+         * Pure second-pass gate — unit-tested. Re-decode only when the primary
+         * produced wake-only content (never silence: whisper hallucinates on
+         * noise) and never when whisper already decoded.
+         */
+        fun needsSecondPass(text: String, engine: String, whisperReady: Boolean): Boolean {
+            if (text.isBlank() || engine == "whisper" || !whisperReady) return false
+            return WakeMatcher.stripWake(Transliterate.normalize(text)).isBlank()
+        }
     }
 
     private val running = AtomicBoolean(false)
@@ -75,6 +85,9 @@ class GateEngine(
     // sherpa-onnx streaming command ASR (loaded once if model files exist)
     @Volatile private var sherpa: OnlineRecognizer? = null
     @Volatile private var sherpaTried = false
+    // retained command PCM for second-pass re-decode (whisper) when the
+    // primary transcript is wake-only — overwritten every command, never stored
+    @Volatile private var lastCommandPcm: ByteArray? = null
 
     // ~0.9s of 16kHz 16-bit mono = 28800 bytes of rolling audio (wake tail replay)
     private val ring = Ring(28800)
@@ -317,21 +330,49 @@ class GateEngine(
             onCommand("")
             return
         }
+        lastCommandPcm = all.toByteArray()
         val text = WhisperDecode.decode(dir, assets, all.toByteArray(), lang)
         if (text.isNullOrBlank()) {
             Log.e(StrikeVoiceController.TAG, "whisper empty — command lost")
             onCommand("")
             return
         }
-        Log.i(StrikeVoiceController.TAG, "command final (whisper/$lang): \"$text\"")
-        onCommand(text)
+        deliverCommand(text, "whisper")
     }
 
+    /**
+     * Deliver a command transcript. When the primary engine returns ONLY the
+     * wake phrase ("eyr straik" with the command lost), re-decode the
+     * retained audio with the independent whisper engine before giving up —
+     * second opinion, never a guess. Silence stays silence (whisper on
+     * noise hallucinates, so it never sees empty input).
+     */
+    private fun deliverCommand(text: String, engine: String) {
+        var t = text.trim()
+        val dir = whisperDir
+        if (dir != null && needsSecondPass(t, engine, true)) {
+            val pcm = lastCommandPcm
+            if (pcm != null) {
+                val second = WhisperDecode.decode(dir, assets, pcm, whisperLang)
+                if (!second.isNullOrBlank()) {
+                    Log.i(StrikeVoiceController.TAG, "second-pass ($engine -> whisper): \"$second\"")
+                    t = second
+                } else {
+                    Log.i(StrikeVoiceController.TAG, "second-pass empty — keeping original")
+                }
+            }
+        }
+        lastCommandPcm = null
+        Log.i(StrikeVoiceController.TAG, "command final ($engine): \"$t\"")
+        onCommand(t)
+    }
     // ------------------------------------------------------------------
     // Primary command ASR: sherpa-onnx streaming Zipformer 20M int8
     // ------------------------------------------------------------------
     private fun trySherpaCommand(tail: ByteArray): Boolean {
         val rec = loadSherpa() ?: return false
+        val all = java.io.ByteArrayOutputStream()
+        if (tail.isNotEmpty()) all.write(tail)
         return try {
             val stream = rec.createStream()
             try {
@@ -356,6 +397,7 @@ class GateEngine(
                         if (n < 0) Thread.sleep(50)
                         continue
                     }
+                    all.write(buf, 0, n)
                     stream.acceptWaveform(bytesToFloats(buf, n), 16000)
                     decodeAll(rec, stream)
                     val p = rec.getResult(stream).text.orEmpty().trim()
@@ -406,10 +448,10 @@ class GateEngine(
                     return true
                 }
                 if (fin.isEmpty()) return false // decode dropped it — Vosk replays the tail
-                Log.i(StrikeVoiceController.TAG, "command final (sherpa): \"$fin\"")
-                onCommand(fin)
+                deliverCommand(fin, "sherpa")
                 true
             } finally {
+                lastCommandPcm = all.toByteArray()
                 stream.release()
             }
             true
@@ -491,6 +533,8 @@ class GateEngine(
     // ------------------------------------------------------------------
     private fun voskCommand(tail: ByteArray) {
         var cmd: Recognizer? = null
+        val all = java.io.ByteArrayOutputStream()
+        if (tail.isNotEmpty()) all.write(tail)
         try {
             val m = model ?: return
             cmd = Recognizer(m, 16000f)
@@ -517,6 +561,8 @@ class GateEngine(
                     if (n < 0) Thread.sleep(50)
                     continue
                 }
+                all.write(buf, 0, n)
+                if (all.size() > 16000 * 2 * 30) break // 30s RAM cap
                 val endpointed = cmd.acceptWaveForm(buf, n)
                 val p = try {
                     JSONObject(cmd.partialResult).optString("partial", "")
@@ -565,9 +611,8 @@ class GateEngine(
             StrikeVoiceController.noteFinalized()
             val fin = textOf(cmd.finalResult)
             if (fin.isNotEmpty() && fin != segs.lastOrNull()) segs.add(fin)
-            val joined = segs.joinToString(" ").trim()
-            Log.i(StrikeVoiceController.TAG, "command final (vosk): \"$joined\"")
-            onCommand(joined)
+            lastCommandPcm = all.toByteArray()
+            deliverCommand(segs.joinToString(" ").trim(), "vosk")
         } catch (e: Exception) {
             Log.e(StrikeVoiceController.TAG, "command failed", e)
             onCommand("")
