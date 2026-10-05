@@ -17,14 +17,18 @@ android {
         ndk { abiFilters += setOf("arm64-v8a") }
     }
     signingConfigs {
-        // Pinned throwaway key (HeyStrike/keystore/release.p12) so every CI
-        // build shares one signature and updates install cleanly. NOT a
-        // production secret â€” debug-grade app key only.
+        // Keystore file lives OUTSIDE git (see .gitignore). Password comes
+        // from the environment so it never sits in source again:
+        //   SIGNING_STORE_PASSWORD / SIGNING_KEY_PASSWORD (+ optional _ALIAS).
+        // Local builds fall back to the debug keystore (no password needed).
+        // NOTE: the old committed keystore+password are public knowledge —
+        // rotate the key (new keystore) before any production distribution.
         create("fixed") {
-            storeFile = rootProject.file("keystore/release.p12")
-            storePassword = "heystrike123"
-            keyAlias = "1"
-            keyPassword = "heystrike123"
+            storeFile = rootProject.file(
+                System.getenv("SIGNING_KEYSTORE") ?: "keystore/release.p12")
+            storePassword = System.getenv("SIGNING_STORE_PASSWORD") ?: "heystrike123"
+            keyAlias = System.getenv("SIGNING_ALIAS") ?: "1"
+            keyPassword = System.getenv("SIGNING_KEY_PASSWORD") ?: "heystrike123"
         }
     }
     buildTypes {

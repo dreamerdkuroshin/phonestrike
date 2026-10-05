@@ -20,13 +20,14 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <!-- Resolve contacts ("message Beru") — lookup only, nothing is sent -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
-    <!-- Phone tasks -->
-    <uses-permission android:name="android.permission.CALL_PHONE" />
-    <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- Phone tasks: ACTION_DIAL only (no CALL_PHONE needed) -->
+    <!-- (SEND_SMS/CALL_PHONE removed: unused dangerous permissions) -->
     <!-- Auto-start listening after reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Vision: camera capture on voice cue (spec 11) -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- In-app APK updates from GitHub Releases (Updater.kt) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Vision: one-shot screen capture via MediaProjection FGS (spec 12) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
@@ -42,7 +43,7 @@
         android:name=".StrikeApp"
         android:label="Hey Strike"
         android:theme="@style/Theme.Strike"
-        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:allowBackup="false">
 
         <activity
@@ -80,6 +81,17 @@
         <activity
             android:name=".ScreenShotActivity"
             android:exported="false" />
+
+        <!-- Updater APK install source (was missing: FileProvider crashed) -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <service
             android:name=".ScreenCaptureService"

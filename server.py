@@ -16,10 +16,27 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 from flask_cors import CORS
 
 from strike import config, device, intents, jarvis, llm, media, system
-from strike import executor, provider, research
+from strike import executor, provider, research, tools
 
 app = Flask(__name__)
-CORS(app)
+# localhost-only CORS: the web UI is served by this same Flask app, and the
+# Android app + Termux scripts all use 127.0.0.1 — no LAN origin needs access
+CORS(app, resources={r"/*": {"origins": ["http://127.0.0.1:5000", "http://localhost:5000"]}})
+
+
+@app.after_request
+def _sec_headers(resp):
+    # ponytail: minimal static headers, no flask-talisman dependency
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    resp.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; "
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'self'",
+    )
+    return resp
 
 # --- route guards (kept verbatim from the monolith per endpoint) ---
 _JARVIS_API = ("run ", "switch to ", "list ", "launch ", "start ", "stop ", "status", "check ", "help", "?", "draw ", "generate image", "current model", "omniroute ", "restart strike", "open ", "call ", "battery", "torch", "flashlight", "volume", "search ", "google ", "navigate ")
@@ -85,6 +102,10 @@ def api_history_load():
 
 @app.route('/api/history/sync', methods=['POST'])
 def api_history_sync():
+    # LIVE: web UI persists conversations through here (script.js
+    # saveConversations). Localhost-only — it writes server files.
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        return jsonify({"error": "history sync is local-only"}), 403
     try:
         data = request.json or []
         system.save_conversations(data)
@@ -95,7 +116,34 @@ def api_history_sync():
 
 @app.route('/api/mcp/list', methods=['GET'])
 def api_mcp_list():
-    return jsonify([])
+    return jsonify(tools.list_servers())
+
+
+@app.route('/api/mcp/add', methods=['POST'])
+def api_mcp_add():
+    """Register an MCP server connection (what the web UI calls).
+    Localhost-only: persists to config + probes the URL (SSRF-guarded)."""
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        return jsonify({"error": "mcp add is local-only"}), 403
+    data = request.json or {}
+    res, err = tools.add_server(str(data.get('name', ''))[:40],
+                                str(data.get('transport', 'sse'))[:10],
+                                str(data.get('url', ''))[:500],
+                                str(data.get('command', ''))[:500])
+    if err:
+        return jsonify({"error": err}), 400
+    return jsonify(res)
+
+
+@app.route('/api/mcp/remove', methods=['POST'])
+def api_mcp_remove():
+    """Disconnect a server (what the web UI calls). Localhost-only."""
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        return jsonify({"error": "mcp remove is local-only"}), 403
+    data = request.json or {}
+    if not tools.remove_server(str(data.get('name', ''))[:40]):
+        return jsonify({"error": "no such server"}), 404
+    return jsonify({"status": "removed"})
 
 
 @app.route('/api/upload', methods=['POST'])
@@ -336,7 +384,10 @@ def api_tasks_cancel(tid):
 
 @app.route('/api/history/purge', methods=['POST'])
 def api_history_purge():
-    """Delete history. {scope: conversations|all}. Uploads never touched."""
+    """Delete history. {scope: conversations|all}. Uploads never touched.
+    Localhost-only — it deletes server files."""
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        return jsonify({"error": "history purge is local-only"}), 403
     data = request.json or {}
     removed = system.purge_history(str(data.get('scope', 'conversations'))[:20])
     return jsonify({"removed": removed})
@@ -384,4 +435,4 @@ if __name__ == '__main__':
 ║  🌐 Web UI: http://127.0.0.1:5000             ║
 ╚═══════════════════════════════════════════════╝
 """)
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='127.0.0.1', port=5000, debug=False)

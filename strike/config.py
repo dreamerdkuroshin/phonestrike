@@ -27,13 +27,17 @@ def _default():
 
 
 def load():
-    """Read config.json (or defaults). Called lazily on first use."""
+    """Read config.json (or defaults). A corrupt file must never kill the
+    server at boot — fall back to defaults and keep running."""
     global _config
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, 'r') as f:
-            _config = json.load(f)
-    else:
-        _config = _default()
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH) as f:
+                _config = json.load(f)
+                return _config
+    except Exception:
+        pass
+    _config = _default()
     return _config
 
 
@@ -78,11 +82,23 @@ def get_model():
 
 
 def replace(data):
-    """Replace in-memory config AND persist (POST /config)."""
+    """Replace in-memory config AND persist atomically (temp+rename so a
+    crash mid-write can never corrupt config.json)."""
+    import tempfile
     global _config
     _config = data
-    with open(CONFIG_PATH, 'w') as f:
-        json.dump(_config, f, indent=2)
+    d = os.path.dirname(CONFIG_PATH) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-config-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(_config, f, indent=2)
+        os.replace(tmp, CONFIG_PATH)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return _config
 
 
@@ -95,7 +111,7 @@ def ensure_file():
 def set_model(name):
     """Switch model in both config formats. Returns (ok, message)."""
     try:
-        with open(CONFIG_PATH, 'r') as f:
+        with open(CONFIG_PATH) as f:
             cfg = json.load(f)
         if "model" in cfg or "provider" in cfg:
             cfg['model'] = name
@@ -103,10 +119,7 @@ def set_model(name):
             cfg['openai']['model'] = name
         else:
             cfg['model'] = name
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump(cfg, f, indent=2)
-        global _config
-        _config = cfg
+        replace(cfg)  # atomic persist + in-memory update together
         return True, (f"✅ Switched to model: {name}\n"
                       "🔄 Restart server to apply (or it applies on next chat).")
     except Exception as e:

@@ -71,9 +71,20 @@ def load_conversations():
 
 
 def save_conversations(data):
+    import tempfile
     config.ensure_dirs()
-    with open(config.history_file(), 'w') as f:
-        json.dump(data, f, indent=2)
+    d = os.path.dirname(config.history_file()) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-hist-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, config.history_file())
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def purge_history(scope="conversations"):
@@ -103,6 +114,11 @@ def append_crash(app, thread, stack):
     stack = str(stack or '')[:8000]
     if not stack.strip():
         return False, "empty"
+    # scrub anything key-like before persisting (stacks can echo config/URLs)
+    import re as _re
+    stack = _re.sub(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*\S+", r"\1=***", stack)
+    stack = _re.sub(r"\b(sk-[A-Za-z0-9-_]{8,}|ghp_[A-Za-z0-9]{8,}|xox[bap]-[A-Za-z0-9-]{8,})\b",
+                    "***KEY***", stack)
     try:
         config.ensure_dirs()
         path = os.path.join(config.WORKSPACE_DIR, "agent", "crash.log")
@@ -118,10 +134,12 @@ def append_crash(app, thread, stack):
 
 
 def config_view():
-    """Redacted config — never serve the raw key."""
+    """Redacted config — never serve raw keys (api_key AND telegram_token)."""
     safe = json.loads(json.dumps(config.get()))
     if safe.get("api_key"):
         safe["api_key"] = "***"
+    if safe.get("telegram_token"):
+        safe["telegram_token"] = "***set***" if safe["telegram_token"] else safe["telegram_token"]
     if isinstance(safe.get("openai"), dict) and safe["openai"].get("api_key"):
         safe["openai"]["api_key"] = "***"
     return safe

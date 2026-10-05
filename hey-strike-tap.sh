@@ -24,7 +24,7 @@ termux-notification \
   --button1 "🎙️ Speak" \
   --button1-action "bash $ONCE" \
   --button2 "⌨️ Type" \
-  --button2-action "bash $ONCE --text \$REPLY" \
+  --button2-action "bash $ONCE --text \"\$REPLY\"" \
   --button3 "🔕 Hide" \
   --button3-action "termux-notification-remove hey_strike_tap" \
   2>/dev/null

@@ -132,13 +132,17 @@ while true; do
     wake=1
     echo "[bare-command wake]"
   else
-    # STT often drops "Hey Strike" prefix ("Hey Strike how are you" -> "how are you").
-    # If speech is substantial, treat as implicit command so mic feels alive.
+    # STT often drops "Hey Strike" ("Hey Strike how are you" -> "how are you").
+    # Implicit-wake processes ANY substantial speech as a command: convenient
+    # but it means background chatter can trigger actions. Default OFF for
+    # privacy — re-enable with: export IMPLICIT_WAKE=1
     words=$(echo "$low" | wc -w)
-    if [ "$words" -ge 2 ]; then
+    if [ "${IMPLICIT_WAKE:-0}" = "1" ] && [ "$words" -ge 2 ]; then
       echo "[implicit command, no wake heard — processing anyway]"
       handle_command "$heard"
       continue
+    elif [ "$words" -ge 2 ]; then
+      echo "[heard speech without wake word — say 'Hey Strike' first (or export IMPLICIT_WAKE=1)]"
     fi
   fi
   if [ "$wake" -eq 1 ]; then

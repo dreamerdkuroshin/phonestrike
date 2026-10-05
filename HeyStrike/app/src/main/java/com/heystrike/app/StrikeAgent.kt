@@ -249,9 +249,9 @@ Screen now:
                     ConversationManager.recordToolResult(ctx, "$name($arg) -> $res")
                     break
                 }
-                // spec 16/32: HITL barrier — never tap send/delete/pay unconfirmed
+                // spec 16/32/38: HITL barrier — prompt on USER_CONFIRMED and above
                 val level = AgentPermissions.levelFor(name, cleanArg, drafted)
-                if (level != AgentPermissions.Level.SAFE) {
+                if (AgentPermissions.shouldPrompt(level)) {
                     val pc = PendingConfirm.set(name, cleanArg, level)
                     log.append("confirm required: $name($cleanArg)\n")
                     return PendingConfirm.question(pc)

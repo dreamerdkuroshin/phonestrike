@@ -3,10 +3,10 @@ package com.heystrike.app
 import android.content.Context
 
 /**
- * Spec 16/32 — HITL confirmation barrier. The planner pauses before a
- * CONFIRM/CRITICAL tap; the next utterance ("yes"/"no") or the task-card
- * Yes/No buttons release it. In-memory only: 2-minute TTL and process death
- * cancel the action (a stale yes can never fire an old action).
+ * Spec 16/32/38 — HITL confirmation barrier. The planner pauses before a
+ * USER_CONFIRMED/SENSITIVE/CRITICAL tap; the next utterance ("yes"/"no") or
+ * the task-card Yes/No buttons release it. In-memory only: 2-minute TTL and
+ * process death cancel the action (a stale yes can never fire an old action).
  */
 object PendingConfirm {
 
@@ -109,8 +109,9 @@ object PendingConfirm {
     }
 
     fun question(p: Pending): String =
-        if (p.level == "CRITICAL")
-            "High-risk action: ready to tap ${p.arg}? Say yes to confirm or no to cancel."
-        else
-            "Ready to tap ${p.arg}? Say yes to confirm, no to cancel."
+        when (p.level) {
+            "CRITICAL" -> "High-risk action: ready to tap ${p.arg}? Say yes to confirm or no to cancel."
+            "SENSITIVE" -> "Sensitive action involving ${p.arg} — ready to tap it? Say yes to confirm or no to cancel."
+            else -> "Ready to tap ${p.arg}? Say yes to confirm, no to cancel."
+        }
 }

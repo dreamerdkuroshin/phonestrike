@@ -4,3 +4,10 @@ build/
 *.log
 
 __pycache__/
+
+# signing keys must never be committed (see F-03)
+keystore/*.p12
+keystore/*.jks
+*.keystore
+.env
+

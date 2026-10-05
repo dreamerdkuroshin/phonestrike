@@ -7,14 +7,14 @@ import org.junit.Test
 /** JVM regression tests for permission tiers, confirm voice words, corrections. */
 class AgentPermissionsTest {
 
-    // ---- spec 31/32 permission levels ----
+    // ---- spec 31/32/38 permission levels ----
 
     @Test
     fun sendAndDeleteTapsNeedConfirm() {
-        assertEquals(AgentPermissions.Level.CONFIRM, AgentPermissions.levelFor("tap", "Send"))
-        assertEquals(AgentPermissions.Level.CONFIRM, AgentPermissions.levelFor("tap", "send message"))
-        assertEquals(AgentPermissions.Level.CONFIRM, AgentPermissions.levelFor("TAP", "Delete"))
-        assertEquals(AgentPermissions.Level.CONFIRM, AgentPermissions.levelFor("tap", "Remove"))
+        assertEquals(AgentPermissions.Level.USER_CONFIRMED, AgentPermissions.levelFor("tap", "Send"))
+        assertEquals(AgentPermissions.Level.SENSITIVE, AgentPermissions.levelFor("tap", "send message"))
+        assertEquals(AgentPermissions.Level.USER_CONFIRMED, AgentPermissions.levelFor("TAP", "Delete"))
+        assertEquals(AgentPermissions.Level.USER_CONFIRMED, AgentPermissions.levelFor("tap", "Remove"))
     }
 
     @Test
@@ -26,16 +26,35 @@ class AgentPermissionsTest {
 
     @Test
     fun wordBoundaryPreventsFalsePositives() {
-        assertEquals(AgentPermissions.Level.SAFE, AgentPermissions.levelFor("tap", "sender"))
-        assertEquals(AgentPermissions.Level.SAFE, AgentPermissions.levelFor("tap", "Settings"))
-        assertEquals(AgentPermissions.Level.CONFIRM, AgentPermissions.levelFor("tap", "Send location"))
+        assertEquals(AgentPermissions.Level.LOW_RISK, AgentPermissions.levelFor("tap", "sender"))
+        assertEquals(AgentPermissions.Level.LOW_RISK, AgentPermissions.levelFor("tap", "Settings"))
+        assertEquals(AgentPermissions.Level.USER_CONFIRMED, AgentPermissions.levelFor("tap", "Send location"))
     }
 
     @Test
     fun typingDraftsIsSafe() {
-        assertEquals(AgentPermissions.Level.SAFE, AgentPermissions.levelFor("type", "Send the report"))
-        assertEquals(AgentPermissions.Level.SAFE, AgentPermissions.levelFor("enter", "Send"))
-        assertEquals(AgentPermissions.Level.SAFE, AgentPermissions.levelFor("launch", "whatsapp"))
+        assertEquals(AgentPermissions.Level.LOW_RISK, AgentPermissions.levelFor("type", "Send the report"))
+        assertEquals(AgentPermissions.Level.LOW_RISK, AgentPermissions.levelFor("enter", "Send"))
+        assertEquals(AgentPermissions.Level.LOW_RISK, AgentPermissions.levelFor("launch", "whatsapp"))
+    }
+
+    @Test
+    fun readOnlyToolsNeverPrompt() {
+        assertEquals(AgentPermissions.Level.READ_ONLY, AgentPermissions.levelFor("verify", "anything"))
+        assertEquals(AgentPermissions.Level.READ_ONLY, AgentPermissions.levelFor("wait", "2"))
+    }
+
+    @Test
+    fun sensitiveKeywordsNeedSensitive() {
+        assertEquals(AgentPermissions.Level.SENSITIVE, AgentPermissions.levelFor("tap", "Call"))
+        assertEquals(AgentPermissions.Level.SENSITIVE, AgentPermissions.levelFor("tap", "password"))
+    }
+
+    @Test
+    fun hindiKeywordsMap() {
+        assertEquals(AgentPermissions.Level.SENSITIVE, AgentPermissions.levelFor("tap", "bhejo"))
+        assertEquals(AgentPermissions.Level.USER_CONFIRMED, AgentPermissions.levelFor("tap", "hatao"))
+        assertEquals(AgentPermissions.Level.CRITICAL, AgentPermissions.levelFor("tap", "bhugtan"))
     }
 
     // ---- confirmation voice words ----
