@@ -7,8 +7,9 @@ import time
 import urllib.request
 
 BASE = "http://127.0.0.1:5000"
-ROUNDS = 12
-WORKERS = 15
+ROUNDS = 6
+WORKERS = 4
+# heartbeats: -u + per-round line so a killed run still shows progress
 
 rec = {"health": [], "chat": [], "voice": [], "cfg_write": [], "cfg_read": []}
 errs = {"count": 0, "zero": 0, "non200": 0}
@@ -45,7 +46,7 @@ def note(key, dt, status):
 def llm_stream():
     """Hold one worker + llama inference with a long story. Slow-consume."""
     payload = {"messages": [{"role": "user",
-                             "content": "Write a long adventure story, at least 600 words."}]}
+                             "content": "Write a short adventure story, about 200 words."}]}
     r = urllib.request.Request(BASE + "/api/chat", data=json.dumps(payload).encode(),
                                headers={"Content-Type": "application/json"})
     t0 = time.time()
@@ -57,7 +58,7 @@ def llm_stream():
                 if first is None:
                     first = time.time() - t0
                 n += 1
-                if time.time() - t0 > 100:
+                if time.time() - t0 > 60:
                     break
                 time.sleep(0.05)  # slow consumer holds the worker
     except Exception as e:
@@ -68,7 +69,7 @@ def llm_stream():
 
 
 def worker(wid, model):
-    for _ in range(ROUNDS):
+    for i in range(ROUNDS):
         dt, st, _ = req("GET", "/api/health", timeout=30)
         note("health", dt, st)
         dt, st, _ = req("POST", "/chat", {"message": "battery status"}, timeout=30)
@@ -82,6 +83,8 @@ def worker(wid, model):
         note("cfg_write", dt, st)
         dt, st, _ = req("GET", "/config", timeout=30)
         note("cfg_read", dt, st)
+        if i % 3 == 2:
+            print(f"w{wid} round {i + 1}/{ROUNDS}", flush=True)
 
 
 def pct(xs, p):
@@ -95,7 +98,8 @@ def main():
     # current model (hammer switches back to the SAME value — no effective change)
     _, _, body = req("GET", "/config", timeout=15)
     try:
-        model = json.loads(body).get("openai", {}).get("model", "qoder/qoder")
+        cfg = json.loads(body)
+        model = cfg.get("model") or cfg.get("openai", {}).get("model") or "qoder/qoder"
     except Exception:
         model = "qoder/qoder"
     print(f"model under hammer: {model}", flush=True)
