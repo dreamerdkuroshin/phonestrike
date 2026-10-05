@@ -15,6 +15,9 @@
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 from flask_cors import CORS
 
+import json
+import os
+
 from strike import config, device, intents, jarvis, llm, media, system
 from strike import executor, provider, research, tools
 
@@ -373,6 +376,40 @@ def api_tasks_get(tid):
     if not t:
         return jsonify({"error": "unknown task"}), 404
     return jsonify(t)
+
+
+@app.route('/api/tasks', methods=['GET'])
+def api_tasks_list():
+    """Latest snapshot per task (live + archived journal)."""
+    return jsonify(executor.list_tasks())
+
+
+@app.route('/api/export', methods=['GET'])
+def api_export():
+    """§72 data export: ZIP of conversations + tasks + redacted config.
+    Localhost-only — it reads the user's data."""
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        return jsonify({"error": "export is local-only"}), 403
+    import io as _io
+    import zipfile as _z
+    buf = _io.BytesIO()
+    with _z.ZipFile(buf, "w", _z.ZIP_DEFLATED) as zf:
+        try:
+            hf = config.history_file()
+            if os.path.exists(hf):
+                zf.write(hf, "conversations.json")
+        except Exception:
+            pass
+        try:
+            tp = os.path.join(config.WORKSPACE_DIR, "tasks", "tasks.jsonl")
+            if os.path.exists(tp):
+                zf.write(tp, "tasks.jsonl")
+        except Exception:
+            pass
+        zf.writestr("config.redacted.json", json.dumps(system.config_view(), indent=2))
+    buf.seek(0)
+    return Response(buf.read(), mimetype="application/zip",
+                    headers={"Content-Disposition": "attachment; filename=strike-export.zip"})
 
 
 @app.route('/api/tasks/<tid>/cancel', methods=['POST'])

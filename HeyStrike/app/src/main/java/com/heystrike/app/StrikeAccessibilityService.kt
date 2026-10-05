@@ -45,10 +45,19 @@ class StrikeAccessibilityService : AccessibilityService() {
             return out.joinToString("\n")
         }
 
-        /** Compact tree: [Class*] text|desc @cx,cy — mirrors StrikeAgent.observe. */
+        /** Compact tree: [Class*] text|desc @cx,cy — mirrors StrikeAgent.observe.
+         * D-05: full §56 field set. Per node: package, text, desc, class,
+         * bounds, clickable(*), editable({ed}), selected({sel}),
+         * enabled (absence of {!}), focused ({foc}). Header carries window
+         * id + package (Android exposes no activity name to a11y services
+         * since getRunningTasks was removed — windowId is the stable key). */
         fun getUiTree(maxNodes: Int = 120, maxLen: Int = 4000): String {
-            val root = instance?.rootInActiveWindow ?: return "(no screen access — enable Strike Tap)"
+            val svc = instance
+            val root = svc?.rootInActiveWindow ?: return "(no screen access — enable Strike Tap)"
             val sb = StringBuilder()
+            val winId = try { root.windowId } catch (e: Exception) { -1 }
+            val wins = try { svc?.windows?.size ?: 0 } catch (e: Exception) { 0 }
+            sb.append("[win=$winId pkg=${root.packageName} windows=$wins]\n")
             var count = 0
             fun dump(n: AccessibilityNodeInfo?, depth: Int) {
                 if (n == null || depth > 8 || count >= maxNodes) return
@@ -58,8 +67,17 @@ class StrikeAccessibilityService : AccessibilityService() {
                 if (text.trim('|').isNotBlank() || n.isClickable) {
                     val b = Rect()
                     n.getBoundsInScreen(b)
+                    val flags = StringBuilder()
+                    if (n.isEditable) flags.append("{ed}")
+                    if (n.isSelected) flags.append("{sel}")
+                    if (!n.isEnabled) flags.append("{!}")
+                    if (n.isFocused) flags.append("{foc}")
+                    if (n.isScrollable) flags.append("{scr}")
+                    if (n.packageName?.toString() != root.packageName?.toString()) {
+                        flags.append("{pkg=${n.packageName}}")
+                    }
                     sb.append("  ".repeat(depth))
-                        .append("[$cls${if (n.isClickable) "*" else ""}] ${text.trim('|')} @${b.centerX()},${b.centerY()}\n")
+                        .append("[$cls${if (n.isClickable) "*" else ""}]${flags} ${text.trim('|')} @${b.centerX()},${b.centerY()}\n")
                 }
                 for (i in 0 until n.childCount) dump(n.getChild(i), depth + 1)
             }

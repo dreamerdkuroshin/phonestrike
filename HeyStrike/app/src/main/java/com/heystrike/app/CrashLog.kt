@@ -51,6 +51,8 @@ object CrashLog {
 
     /** Best-effort resend of a backed-up crash (call off the main thread). */
     fun resendLast(ctx: Context): Boolean {
+        if (!Prefs.crashUpload(ctx)) return false
+        if (Prefs.serverBlockedReason(ctx) != null) return false
         val f = java.io.File(ctx.filesDir, FILE)
         if (!f.isFile) return true
         return try {
@@ -81,11 +83,23 @@ object CrashLog {
         } catch (_: Exception) { false }
     }
 
+    /** P2-3: strip app paths + anything token-shaped before the stack
+     *  leaves the device. Pure function, JVM-testable via send path. */
+    fun sanitize(stack: String): String {
+        var s = stack
+        s = s.replace("/data/data/com.heystrike.app/", "<app>/")
+        s = Regex("(?i)(api[_-]?key|token|secret|password)\\s*[:=]\\s*\\S+")
+            .replace(s, "$1=***")
+        s = Regex("\\b(sk-[A-Za-z0-9-_]{8,}|ghp_[A-Za-z0-9]{8,}|xox[bap]-[A-Za-z0-9-]{8,})\\b")
+            .replace(s, "***KEY***")
+        return s
+    }
+
     private fun send(ctx: Context, t: Thread, e: Throwable) {
         val sw = StringWriter()
         e.printStackTrace(PrintWriter(sw))
-        val stack = sw.toString()
-        Log.e("CrashLog", "uncaught on ${t.name}: $stack")
+        val stack = sanitize(sw.toString())
+        Log.e("CrashLog", "uncaught on ${t.name}: ${stack.take(300)}")
         val ver = try {
             val pi = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
             "${pi.versionName} (${PackageInfoCompat.getLongVersionCode(pi)})"
@@ -95,6 +109,8 @@ object CrashLog {
             java.io.File(ctx.filesDir, FILE).writeText(
                 "$ver\n${t.name}\n${stack.take(8000)}")
         } catch (_: Exception) {}
+        if (!Prefs.crashUpload(ctx)) return // opted out: local backup only
+        if (Prefs.serverBlockedReason(ctx) != null) return // offline mode: keep local
         val body = JSONObject()
             .put("app", ver)
             .put("thread", t.name)

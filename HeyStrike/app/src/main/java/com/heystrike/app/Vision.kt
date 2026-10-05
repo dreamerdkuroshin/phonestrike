@@ -53,8 +53,34 @@ object Vision {
         latch.countDown()
     }
 
+    // P2-5: never send sensitive screens to the LLM. Blocklist for vault/
+    // banking packages (extend in one place) + a password-field heuristic:
+    // a focused text field showing only dots is a password/OTP entry.
+    private val BLOCKED_PKGS = setOf(
+        "com.lastpass.lpandroid", "com.x8bit.dashlane",
+        "com.agilebits.onepassword", "com.bitwarden.authenticator",
+        "com.google.android.apps.authenticator2"
+    )
+
+    /** Non-null reason when this screen must not be sent to vision. */
+    fun screenBlocked(): String? {
+        val pkg = StrikeAccessibilityService.getActivePackage() ?: return null
+        if (BLOCKED_PKGS.any { pkg == it || pkg.startsWith("$it.") }) {
+            return "that app is on the no-vision list — I won't send its screen anywhere"
+        }
+        val foc = StrikeAccessibilityService.getFocusedElement() ?: return null
+        val cls = foc.substringAfter("[", "").substringBefore("]", "")
+        val txt = foc.substringAfter("] ", "").substringBefore(" @")
+        val dotsOnly = txt.trim('•', '●', '*', '|', ' ').isEmpty() && txt.isNotBlank()
+        if (cls.contains("dit", true) && dotsOnly) {
+            return "a password field is focused — I won't send this screen anywhere"
+        }
+        return null
+    }
+
     /** POST a base64 JPEG to PocketStrike /api/vision; plain answer or honest error. */
     fun askServer(ctx: Context, b64: String, question: String): String {
+        Prefs.serverBlockedReason(ctx)?.let { return it }
         return try {
             val c = (URL(Prefs.server(ctx) + "/api/vision").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -66,7 +92,7 @@ object Vision {
             val body = JSONObject().put("image", b64).put("question", question.take(300))
                 .toString().toByteArray()
             c.outputStream.use { it.write(body) }
-            val resp = JSONObject(c.inputStream.bufferedReader().readText())
+            val resp = JSONObject(Prefs.readCapped(c, 60_000))
             if (resp.has("error")) "Vision unavailable: ${resp.optString("error")}"
             else resp.optString("answer", "I couldn't read that.").take(600)
         } catch (e: Exception) {

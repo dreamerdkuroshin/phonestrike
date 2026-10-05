@@ -218,8 +218,30 @@ class SettingsActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.clearBtn).setOnClickListener {
             ConversationManager.clear(this)
-            Toast.makeText(this, "Conversation cleared", Toast.LENGTH_SHORT).show()
+            CrashLog.clearLast(this)
+            Toast.makeText(this, "Conversation + last crash cleared", Toast.LENGTH_SHORT).show()
         }
+        findViewById<Button>(R.id.crashToggleBtn).setOnClickListener {
+            Prefs.setCrashUpload(this, !Prefs.crashUpload(this))
+            if (!Prefs.crashUpload(this)) CrashLog.clearLast(this)
+            refreshPrivacyRows()
+        }
+        findViewById<Button>(R.id.offlineToggleBtn).setOnClickListener {
+            Prefs.setOfflineRequired(this, !Prefs.offlineRequired(this))
+            refreshPrivacyRows()
+            Toast.makeText(this,
+                if (Prefs.offlineRequired(this)) "Offline mode ON — cloud servers refused"
+                else "Offline mode OFF — any server URL allowed (data may leave the phone)",
+                Toast.LENGTH_LONG).show()
+        }
+        refreshPrivacyRows()
+    }
+
+    private fun refreshPrivacyRows() {
+        findViewById<TextView>(R.id.crashToggleStatus).text =
+            if (Prefs.crashUpload(this)) "ON" else "OFF"
+        findViewById<TextView>(R.id.offlineToggleStatus).text =
+            if (Prefs.offlineRequired(this)) "ON" else "OFF"
     }
 
     private fun refreshLangRow() {

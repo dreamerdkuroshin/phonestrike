@@ -11,8 +11,8 @@ android {
         applicationId = "com.heystrike.app"
         minSdk = 26
         targetSdk = 34
-	versionCode = 36
-	versionName = "2.5.21"
+	versionCode = 37
+	versionName = "2.5.22"
         // F23 is arm64; strip other ABIs from the 44MB multi-arch sherpa AAR
         ndk { abiFilters += setOf("arm64-v8a") }
     }
@@ -43,6 +43,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    // StrikeVoiceController gates transcript tracing on BuildConfig.DEBUG
+    buildFeatures { buildConfig = true }
     packaging {
         // sherpa AAR ships desktop natives (osx/win dylibs+dlls, ~110MB) â€”
         // only lib/arm64-v8a/*.so matters on the phone

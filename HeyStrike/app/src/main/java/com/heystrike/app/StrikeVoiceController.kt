@@ -329,7 +329,11 @@ object StrikeVoiceController {
                 val trace = ++traceSeq
                 setStateInternal(State.PROCESSING)
                 Log.i(TAG, "TRACE $trace | T3 final transcript (+${t3 - t0}ms after T0)")
-                Log.i(TAG, "TRACE $trace | command: \"$text\"")
+                // ponytail: never log transcript content (§39) — length + hash
+                // only, and only on debug builds
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "TRACE $trace | cmd len=${text.length} h=${text.hashCode()}")
+                }
                 onCommandCb?.invoke(text)
             }
         },

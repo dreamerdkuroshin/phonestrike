@@ -42,6 +42,26 @@ def _log(t, msg):
     t["updated_at"] = time.time()
 
 
+def _snapshot(t):
+    """JSON-serializable task view (drops locks/procs/fns)."""
+    return {k: v for k, v in t.items() if k not in ("cancel", "proc", "fix_fn")}
+
+
+def _journal(t):
+    """Append-only JSONL log (A-02): tasks survive server restarts as
+    history; live state stays in TASKS. Atomic per-line append."""
+    try:
+        from . import config
+        p = os.path.join(config.WORKSPACE_DIR, "tasks", "tasks.jsonl")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        import json as _j
+        line = _j.dumps({"ts": time.time(), "task": _snapshot(t)}) + "\n"
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
+
 def _run(t, argv, cwd, timeout, step):
     """Run an argv list (never shell=True with LLM text). Returns rc."""
     _log(t, f"[{step}] $ {' '.join(argv)} (cwd={os.path.basename(cwd)})")
@@ -181,6 +201,7 @@ def create_task(repo=None, build="auto", fix=True, fix_fn=None):
          "started_at": time.time(), "updated_at": time.time()}
     with _lock:
         TASKS[tid] = t
+    _journal(t)
     th = threading.Thread(target=_drive, args=(t,), daemon=True)
     th.start()
     return tid
@@ -247,4 +268,33 @@ def _finish(t, state, result):
     t["state"] = state
     t["result"] = (result or "")[:2000]
     t["updated_at"] = time.time()
+    _journal(t)
+
+
+def list_tasks(limit=20):
+    """Latest snapshot per task: live TASKS first, then journal history
+    (so rebooted-away tasks are still listed, marked archived)."""
+    seen = {}
+    with _lock:
+        for tid, t in TASKS.items():
+            seen[tid] = _snapshot(t)
+    try:
+        from . import config
+        import json as _j
+        p = os.path.join(config.WORKSPACE_DIR, "tasks", "tasks.jsonl")
+        if os.path.exists(p):
+            with open(p, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        snap = _j.loads(line).get("task") or {}
+                        tid = snap.get("id")
+                        if tid and tid not in seen:
+                            snap["archived"] = True
+                            seen[tid] = snap
+                    except Exception:
+                        continue
+    except Exception:
+        pass
+    ordered = sorted(seen.values(), key=lambda s: s.get("updated_at", 0), reverse=True)
+    return [dict(s, log=(s.get("log") or [])[-5:]) for s in ordered[:limit]]
     _log(t, f"[{state}] {t['result'][:300]}")

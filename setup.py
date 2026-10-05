@@ -247,14 +247,25 @@ def main():
         "telegram_enabled": telegram_enabled,
         "telegram_token": telegram_token,
         "shizuku_enabled": shizuku_enabled,
-        "voice_enabled": voice_enabled
+        "voice_enabled": voice_enabled,
+        # offline-first: cloud base_urls are refused unless this is off
+        "offline_required": base_url.startswith(("http://127.", "http://localhost")),
     }
 
     try:
-        with open("config.json", "w") as f:
+        # canonical path: the server reads ~/PocketStrike-AI/config.json —
+        # writing to CWD left the server blind (config mismatch bug)
+        cfg_dir = os.path.expanduser("~/PocketStrike-AI")
+        os.makedirs(cfg_dir, exist_ok=True)
+        cfg_path = os.path.join(cfg_dir, "config.json")
+        with open(cfg_path, "w") as f:
             json.dump(config, f, indent=4)
+        try:
+            os.chmod(cfg_path, 0o600)  # secrets live here — owner-only
+        except Exception:
+            pass
         print_header()
-        print(f"{GREEN}Success! Configuration saved to config.json.{NC}\n")
+        print(f"{GREEN}Success! Configuration saved to {cfg_path}.{NC}\n")
         print(f"{CYAN}Configuration Summary:{NC}")
         print(f"  AI Provider:     {provider_name}")
         print(f"  Model:           {selected_model}")

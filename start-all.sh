@@ -29,14 +29,15 @@ else
   done
 fi
 
-# 2. PocketStrike :5000
-if $CURL -s -m 3 http://127.0.0.1:5000/api/status 2>/dev/null | grep -q strike-coder; then
+# 2. PocketStrike :5000 (HTTP 200 = up; never grep body strings — the
+# model name changes and broke the old 'strike-coder'/'pocket' greps)
+if [ "$($CURL -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:5000/api/status 2>/dev/null)" = "200" ]; then
   log "✅ Strike :5000 already running."
 else
   log "🚀 Starting Strike server..."
   /data/data/com.termux/files/usr/bin/bash "$DIR/restart-strike.sh" >> "$DIR/start-all.log" 2>&1
   sleep 4
-  if $CURL -s -m 3 http://127.0.0.1:5000/api/status 2>/dev/null | grep -q pocket; then
+  if [ "$($CURL -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:5000/api/status 2>/dev/null)" = "200" ]; then
     log "✅ Strike online."
   else
     log "⚠️ Strike may still be starting — check: tail $DIR/pocketstrike-5000.log"

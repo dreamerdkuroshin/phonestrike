@@ -18,6 +18,9 @@ _config = None
 def _default():
     return {
         "ai_provider": "openai",
+        # A-06: offline-first by default. When true, query_llm refuses any
+        # non-loopback backend instead of silently going online.
+        "offline_required": True,
         "openai": {
             "api_key": OMNIROUTE_KEY,
             "base_url": OMNIROUTE_URL,

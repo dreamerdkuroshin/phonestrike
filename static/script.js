@@ -431,12 +431,23 @@ function renameConversation(id, event) {
 }
 
 // Clear all chats
-function clearAllConversations() {
+async function clearAllConversations() {
     if (confirm('Are you sure you want to clear all conversations?')) {
         conversations = [];
         activeConversationId = null;
         saveConversations();
         renderAll();
+        // wipe the server side too (conversations + crash stacks which may
+        // contain spoken text). Tasks/uploads/models are never touched.
+        try {
+            await fetch('/api/history/purge', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scope: 'chats' })
+            });
+        } catch (e) {
+            console.error('Server-side purge failed:', e);
+        }
     }
 }
 

@@ -10,7 +10,47 @@ import time
 
 from . import config
 from . import intents
-from .shell import run_shell_command
+from .shell import run_shell_command, run_shell_checked
+
+
+def _pgrep(pattern):
+    """pgrep excluding OUR OWN process (W-04: the old `pgrep -f
+    'python server.py'` matched the checker itself, so status always
+    claimed Running even when the server was dead)."""
+    me = str(os.getpid())
+    out = run_shell_command(f"pgrep -f {shlex.quote(pattern)} 2>/dev/null")
+    if not out or "Error" in out or "BLOCKED" in out:
+        return ""
+    pids = [p for p in out.split() if p.strip() != me]
+    return " ".join(pids)
+
+
+def _http_code(url, timeout=4):
+    """HTTP status via urllib in-process (no curl, no key in ps)."""
+    import urllib.request as _u
+    try:
+        req = _u.Request(url, headers={"Authorization": "Bearer " + config.get_api_key()})
+        with _u.urlopen(req, timeout=timeout) as r:
+            return str(r.status)
+    except Exception as e:
+        code = getattr(getattr(e, "response", None), "status", None)
+        if code:
+            return str(code)
+        import urllib.error as _e
+        if isinstance(e, _e.HTTPError):
+            return str(e.code)
+        return "000"
+
+
+def _poll_http_ok(url, timeout_s=10):
+    """Poll until url answers 2xx (§69 evidence for restart paths)."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        code = _http_code(url)
+        if code.startswith("2"):
+            return True
+        time.sleep(1)
+    return False
 
 
 def _help():
@@ -86,8 +126,8 @@ def _status():
         else:
             status += f"║  ❌ LLM Backend: {base_url[:28]} ║\n"
 
-    # PocketStrike
-    ps = run_shell_command("pgrep -f 'python server.py'")
+    # PocketStrike (self-PID excluded — see _pgrep)
+    ps = _pgrep("python server.py")
     if ps:
         status += f"║  ✅ PocketStrike-AI:       Running (PID: {ps.strip()}) ║\n"
     else:
@@ -115,14 +155,18 @@ def _status():
 
 def _stop():
     run_shell_command("pkill -f 'python server.py'")
-    return "🛑 PocketStrike-AI stopped. Run 'restart strike' to start again."
+    # NOTE: this reply may never arrive — the server dies with the request.
+    # The client seeing the connection drop IS the confirmation.
+    return "🛑 PocketStrike-AI stopped (this connection will drop — that means it worked). Run start-all.sh to start again."
 
 
 def _restart():
     run_shell_command("pkill -f 'python server.py'")
     time.sleep(1)
     run_shell_command("cd ~/PocketStrike-AI && python server.py &")
-    return "🔄 Restarting PocketStrike-AI..."
+    if _poll_http_ok("http://127.0.0.1:5000/api/status", 12):
+        return "🔄 PocketStrike-AI restarted and answering (verified /api/status 200)."
+    return "⚠️ Restart issued but /api/status is not answering — check pocketstrike-5000.log."
 
 
 def _current_model():
@@ -137,17 +181,25 @@ def _current_model():
 
 def _list_models():
     base_url = config.get_base_url()
-    api_key = config.get_api_key()
-    result = run_shell_command(
-        f"curl -s {shlex.quote(base_url)}/models -H 'Authorization: Bearer {api_key}' | grep -o '\"id\":\"[^\"]*\"' | head -30 | sed 's/\"id\":\"//g' | sed 's/\"//g'"
-    )
-    if result:
-        models = result.split('\n')
-        output = f"📋 Available Models ({base_url}):\n"
-        for i, m in enumerate(models, 1):
-            if m:
+    # urllib in-process: the key never appears in ps/shell history (F-01)
+    try:
+        import json as _j
+        import urllib.request as _u
+        req = _u.Request(base_url.rstrip("/") + "/models",
+                         headers={"Authorization": "Bearer " + config.get_api_key()})
+        with _u.urlopen(req, timeout=10) as r:
+            body = _j.loads(r.read(200000).decode("utf-8", "replace"))
+        items = body.get("data") if isinstance(body, dict) else body
+        models = [m.get("id", m) if isinstance(m, dict) else m
+                  for m in (items or [])][:30]
+        models = [m for m in models if m]
+        if models:
+            output = f"📋 Available Models ({base_url}):\n"
+            for i, m in enumerate(models, 1):
                 output += f"  {i}. {m}\n"
-        return output
+            return output
+    except Exception:
+        pass
     return f"❌ No models found or backend not running at {base_url}."
 
 
@@ -171,7 +223,15 @@ _PROJECTS = {
 def _launch_project(project):
     if project in _PROJECTS:
         run_shell_command(_PROJECTS[project] + " &")
-        return f"🚀 Launching {project.title()}..."
+        time.sleep(1)
+        # verify: project process visible (self-PID excluded)
+        probe = {"rehan": "RehanIlyas", "isair": "isair-jarvis",
+                 "automator": "automator.sh", "omniroute": "omniroute",
+                 "llama": "llama-server"}.get(project, project)
+        if _pgrep(probe) or project == "offgrid":
+            return f"🚀 Launching {project.title()}... (process confirmed)"
+        return (f"⚠️ Launch issued for {project.title()} but no process found — "
+                "it may have exited; check Termux output.")
     available = ", ".join(_PROJECTS.keys())
     return f"❌ Unknown project: {project}\n📋 Available: {available}"
 
@@ -187,7 +247,10 @@ def _omni_restart():
     run_shell_command("pkill -f omniroute")
     time.sleep(2)
     run_shell_command("omniroute &")
-    return "🔄 Restarting OmniRoute..."
+    time.sleep(2)
+    if _pgrep("omniroute"):
+        return "🔄 OmniRoute restarted (process confirmed)."
+    return "⚠️ OmniRoute restart issued but no process found — check Termux output."
 
 
 def _draw_image(prompt):
@@ -198,11 +261,23 @@ def _draw_image(prompt):
     if "localhost" in base_url or "127.0.0.1" in base_url:
         return "❌ Image generation needs a cloud provider (OmniRoute/OpenRouter). Your current backend is local llama-server which is text-only."
     api_key = config.get_api_key()
-    result = run_shell_command(
-        f"curl -s -X POST {shlex.quote(base_url)}/chat/completions -H 'Content-Type: application/json' -H 'Authorization: Bearer {api_key}' -d '{{\"model\":\"aihorde/SDXL 1.0\",\"messages\":[{{\"role\":\"user\",\"content\":\"Generate an image: {prompt}\"}}]}}' | grep -o 'https://[^\"]*' | head -1"
-    )
-    if result and result.startswith("http"):
-        return f"🖼️ Image generated:\n{result}"
+    # urllib in-process: key + prompt never appear in ps (F-01)
+    try:
+        import json as _j
+        import re as _re
+        import urllib.request as _u
+        payload = _j.dumps({"model": "aihorde/SDXL 1.0", "messages": [
+            {"role": "user", "content": f"Generate an image: {prompt}"}]}).encode()
+        req = _u.Request(base_url.rstrip("/") + "/chat/completions", data=payload,
+                         headers={"Content-Type": "application/json",
+                                  "Authorization": "Bearer " + api_key})
+        with _u.urlopen(req, timeout=120) as r:
+            body = r.read(200000).decode("utf-8", "replace")
+        m = _re.search(r"https://[^\"]*", body)
+        if m:
+            return f"🖼️ Image generated:\n{m.group(0)}"
+    except Exception:
+        pass
     return "❌ Could not generate image. Check OmniRoute and AI Horde connection."
 
 

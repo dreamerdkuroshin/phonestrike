@@ -308,6 +308,45 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- ===== PRIVACY ===== -->
+        <TextView
+            style="@style/SectionHeader"
+            android:text="PRIVACY" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Crash upload (local only)" />
+                <View style="@style/RowSpacer" />
+                <TextView android:id="@+id/crashToggleStatus" style="@style/RowStatus" android:text="ON" />
+                <Button android:id="@+id/crashToggleBtn" style="@style/RowBtn" android:text="Toggle" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView style="@style/RowTitle" android:text="Offline mode" />
+                <View style="@style/RowSpacer" />
+                <TextView android:id="@+id/offlineToggleStatus" style="@style/RowStatus" android:text="ON" />
+                <Button android:id="@+id/offlineToggleBtn" style="@style/RowBtn" android:text="Toggle" />
+            </LinearLayout>
+        </LinearLayout>
+
         <!-- ===== ABOUT ===== -->
         <TextView
             style="@style/SectionHeader"

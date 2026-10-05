@@ -221,10 +221,10 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
             if (intent == null) return false
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(intent)
-            // Wait for the app to actually come to the foreground
-            Thread.sleep(2000)
-            val active = StrikeAccessibilityService.getActivePackage()
-            active == pkg
+            // D-06: poll for the real foreground app, don't sleep-and-hope
+            val ok = StrikeAccessibilityService.waitForPackage(pkg, 4000) ||
+                StrikeAccessibilityService.getActivePackage() == pkg
+            ok
         } catch (_: Exception) { false }
     }
 
@@ -424,6 +424,7 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
      * recovery prompt containing words like "open" is never hijacked.
      */
     private fun askServerRaw(prompt: String, timeoutMs: Int = 90000): String? {
+        Prefs.serverBlockedReason(ctx)?.let { return it }
         return try {
             val url = URL(Prefs.server(ctx) + "/api/chat")
             val c = (url.openConnection() as HttpURLConnection).apply {
@@ -439,7 +440,7 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
                     .put(JSONObject().put("role", "user").put("content", prompt)))
                 .toString().toByteArray()
             c.outputStream.use { it.write(body) }
-            c.inputStream.bufferedReader().readText()
+            Prefs.readCapped(c)
         } catch (_: Exception) { null }
     }
 
@@ -691,12 +692,13 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
     /** DuckDuckGo results via the server's /api/search; null = plain LLM path. */
     private fun searchSnippet(text: String): String? {
         if (!searchCue.containsMatchIn(text.lowercase())) return null
+        if (Prefs.serverBlockedReason(ctx) != null) return null
         return try {
             val q = URLEncoder.encode(text.take(160), "UTF-8")
             val c = URL(Prefs.server(ctx) + "/api/search?q=$q").openConnection() as HttpURLConnection
             c.connectTimeout = 8000
             c.readTimeout = 8000
-            val arr = JSONObject(c.inputStream.bufferedReader().readText()).getJSONArray("results")
+            val arr = JSONObject(Prefs.readCapped(c, 60_000)).getJSONArray("results")
             if (arr.length() == 0) return null
             buildString {
                 append("Web search results for \"").append(text.take(120)).append("\":\n")
@@ -715,6 +717,11 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
 
     /** Live token stream (ChatGPT-style): calls onToken per chunk as they arrive. */
     fun askServerStream(text: String, onDone: () -> Unit, onToken: (String) -> Unit) {
+        Prefs.serverBlockedReason(ctx)?.let { reason ->
+            onToken(reason)
+            onDone()
+            return
+        }
         // context enrichment stays client-side; the executor path above only
         // ever sees the FINAL transcript
         var prompt = ConversationManager.enrich(ctx, text)
@@ -755,8 +762,11 @@ class StrikeApi(private val ctx: Context, private val tts: TextToSpeech?) {
                         val tok = JSONObject(payload).optString("token", "")
                         if (tok.isNotEmpty()) {
                             StrikeVoiceController.noteFirstToken()
-                            answer.append(tok)
-                            onToken(tok)
+                            // OOM cap: a rogue stream must not grow the answer forever
+                            if (answer.length < 60_000) {
+                                answer.append(tok)
+                                onToken(tok)
+                            }
                         }
                     } catch (_: Exception) {}
                 }

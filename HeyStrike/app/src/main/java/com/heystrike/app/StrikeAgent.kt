@@ -54,6 +54,7 @@ class StrikeAgent(private val ctx: Context) {
     fun observe(): String {
         val root = StrikeAccessibilityService.instance?.rootInActiveWindow
             ?: return "(no screen access — enable Strike Tap)"
+        nodes = 0 // reset every dump (a stale counter blanks all later trees)
         val sb = StringBuilder()
         dump(root, 0, sb)
         val s = sb.toString()
@@ -69,10 +70,48 @@ class StrikeAgent(private val ctx: Context) {
         if (text.trim('|').isNotBlank() || n.isClickable) {
             val b = Rect()
             n.getBoundsInScreen(b)
+            val flags = StringBuilder()
+            if (n.isEditable) flags.append("{ed}")
+            if (n.isSelected) flags.append("{sel}")
+            if (!n.isEnabled) flags.append("{!}")
+            if (n.isFocused) flags.append("{foc}")
             sb.append("  ".repeat(depth))
-                .append("[$cls${if (n.isClickable) "*" else ""}] ${text.trim('|')} @${b.centerX()},${b.centerY()}\n")
+                .append("[$cls${if (n.isClickable) "*" else ""}]${flags} ${text.trim('|')} @${b.centerX()},${b.centerY()}\n")
         }
         for (i in 0 until n.childCount) dump(n.getChild(i), depth + 1, sb)
+    }
+
+    // ---------- D-06: wait for the UI to actually change ----------
+    // Fixed sleeps read stale trees on slow devices (false-positive
+    // verify). Poll a content fingerprint: return as soon as it moves,
+    // or false on timeout. Blocking is fine — run() is never on main.
+    // NOTE: fingerprints CONTENT (node identity hashes would differ on
+    // every dump and make this return instantly — useless).
+    fun uiFingerprint(): Int {
+        val root = StrikeAccessibilityService.instance?.rootInActiveWindow ?: return 0
+        var h = 17
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var seen = 0
+        while (queue.isNotEmpty() && seen < 300) {
+            val n = queue.removeFirst()
+            seen++
+            h = 31 * h + (n.text?.toString().hashCode() ?: 0)
+            h = 31 * h + (n.contentDescription?.toString().hashCode() ?: 0)
+            h = 31 * h + (if (n.isClickable) 1 else 0)
+            for (i in 0 until n.childCount) n.getChild(i)?.let { queue.add(it) }
+        }
+        return 31 * h + seen
+    }
+
+    fun waitForUiChange(timeoutMs: Long = 2000): Boolean {
+        val before = uiFingerprint()
+        val deadline = android.os.SystemClock.uptimeMillis() + timeoutMs
+        while (android.os.SystemClock.uptimeMillis() < deadline) {
+            android.os.SystemClock.sleep(120)
+            if (uiFingerprint() != before) return true
+        }
+        return false
     }
 
     // ---------- Act tools ----------
@@ -114,7 +153,7 @@ class StrikeAgent(private val ctx: Context) {
                     val i = pm.getLaunchIntentForPackage(pkg) ?: return "fail: $arg not installed"
                     i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     ctx.startActivity(i)
-                    Thread.sleep(1500)
+                    waitForUiChange(2500)
                     // verify: never claim open unless it is actually foreground
                     val active = StrikeAccessibilityService.getActivePackage()
                     if (active == pkg) "ok: launched $arg"
@@ -124,19 +163,19 @@ class StrikeAgent(private val ctx: Context) {
             "tap" -> if (svc == null) "fail: tap service off"
             else {
                 val n = findNode(arg)
-                if (n != null && clickNode(n)) { Thread.sleep(800); "ok: tapped $arg" }
+                if (n != null && clickNode(n)) { waitForUiChange(1500); "ok: tapped $arg" }
                 else "fail: '$arg' not on screen"
             }
             "type" -> if (svc == null) "fail: tap service off"
             else if (arg.isBlank()) "fail: empty text — replan with the exact message to type"
             else {
                 val focus = svc.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-                    ?: findNode("search")?.also { clickNode(it); Thread.sleep(500) }
+                    ?: findNode("search")?.also { clickNode(it); waitForUiChange(1200) }
                 val target = focus ?: return "fail: no input field"
                 val b = Bundle()
                 b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, arg)
                 if (target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, b)) {
-                    Thread.sleep(800); "ok: typed $arg"
+                    waitForUiChange(1500); "ok: typed $arg"
                 } else "fail: typing rejected"
             }
             "enter" -> {
@@ -146,7 +185,7 @@ class StrikeAgent(private val ctx: Context) {
                     val n = findNode(key)
                     if (n != null && clickNode(n)) { done = true; break }
                 }
-                Thread.sleep(800)
+                waitForUiChange(1500)
                 if (done) "ok: submitted" else "fail: no submit key"
             }
             "swipeup", "swipedown" -> {
@@ -164,7 +203,7 @@ class StrikeAgent(private val ctx: Context) {
                     object : AccessibilityService.GestureResultCallback() {
                         override fun onCompleted(g: GestureDescription?) { done = true }
                     }, null)
-                Thread.sleep(900)
+                waitForUiChange(1500)
                 if (done) "ok: swiped" else "fail: gesture rejected"
             }
             "back" -> if (StrikeAccessibilityService.goBack()) "ok: back" else "fail: back"
@@ -181,6 +220,7 @@ class StrikeAgent(private val ctx: Context) {
 
     // ---------- Qwen brain: picks tools ----------
     private fun askQwen(system: String, user: String): String {
+        Prefs.serverBlockedReason(ctx)?.let { return "BRAIN_OFFLINE: $it" }
         return try {
             val url = URL(Prefs.server(ctx) + "/api/chat")
             val c = (url.openConnection() as HttpURLConnection).apply {
@@ -199,7 +239,7 @@ class StrikeAgent(private val ctx: Context) {
                     .put(JSONObject().put("role", "user").put("content", user)))
                 .toString().toByteArray()
             c.outputStream.use { it.write(payload) }
-            c.inputStream.bufferedReader().readText()
+            Prefs.readCapped(c)
         } catch (e: Exception) { "BRAIN_OFFLINE: ${e.message}" }
     }
 
@@ -218,6 +258,7 @@ Screen now:
         val log = StringBuilder()
         if (prior.isNotBlank()) log.append(prior.trim()).append("\n")
         val done = seeds.toMutableSet()
+        val retried = mutableSetOf<String>() // A-01: one retry per step max
         var screen = observe()
         var drafted = false // a type() draft exists - enter() would submit it
         repeat(8) { round ->
@@ -264,9 +305,25 @@ Screen now:
                 }
                 if (name.equals("type", true) && res.startsWith("ok")) drafted = true
                 if (name.equals("enter", true)) drafted = false
-                // verify-after-act: a failed step ends the round — the next
-                // round re-observes and replans instead of acting blind
-                if (res.startsWith("fail") || res.startsWith("not-verified")) break
+                // A-01 RECOVER: first failure of a step gets ONE re-observed
+                // retry in the same round (transient miss, slow render); a
+                // repeat failure ends the round so the next round replans
+                // instead of hammering — never blind-tap continuously
+                if (res.startsWith("fail") || res.startsWith("not-verified")) {
+                    val key = dedupeKey(name, cleanArg)
+                    if (key !in retried && name.lowercase() in MUTATING) {
+                        retried.add(key)
+                        screen = observe()
+                        val retry = tool(name, cleanArg)
+                        log.append("$name($arg) -> retry: $retry\n")
+                        ConversationManager.recordToolResult(ctx, "$name($arg) -> retry: $retry")
+                        if (retry.startsWith("ok")) {
+                            done.add(key)
+                            continue
+                        }
+                    }
+                    break
+                }
             }
             screen = observe()
         }

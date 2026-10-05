@@ -88,23 +88,36 @@ def save_conversations(data):
 
 
 def purge_history(scope="conversations"):
-    """Delete history. Scope 'conversations' (default) clears the server
-    conversation store; 'all' additionally truncates crash.log (stacks can
-    contain spoken text). Uploads are NEVER touched. Returns what was removed."""
+    """Delete history. Scopes (§71): conversations | crash | tasks | chats
+    (= conversations + crash.log, what the web Clear button wipes) | all.
+    Only server-persisted stores are swept (conversations.json, crash.log,
+    tasks.jsonl). Voice metadata lives on-device (Settings > Clear), chat
+    text in the browser (Clear button purges both ends). Uploads and models
+    are NEVER touched. Returns what was removed."""
+    if scope == "chats":
+        return sorted(set(purge_history("conversations") + purge_history("crash")))
     removed = []
     try:
         hf = config.history_file()
-        if os.path.exists(hf):
+        if scope in ("conversations", "all") and os.path.exists(hf):
             os.remove(hf)
             removed.append("conversations")
     except Exception:
         pass
-    if scope == "all":
+    if scope in ("all", "crash"):
         try:
             cp = os.path.join(config.WORKSPACE_DIR, "agent", "crash.log")
             if os.path.exists(cp):
                 open(cp, "w").close()
                 removed.append("crash.log")
+        except Exception:
+            pass
+    if scope in ("all", "tasks"):
+        try:
+            tp = os.path.join(config.WORKSPACE_DIR, "tasks", "tasks.jsonl")
+            if os.path.exists(tp):
+                open(tp, "w").close()
+                removed.append("tasks.jsonl")
         except Exception:
             pass
     return removed

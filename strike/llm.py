@@ -2,9 +2,30 @@
 from . import config
 
 
+def _offline_block():
+    """A-06: when offline_required, refuse cloud backends loudly instead of
+    silently sending voice/vision/history to a remote URL. Returns the
+    refusal string, or None when the backend is local."""
+    import urllib.parse as _p
+    try:
+        if not config.get().get("offline_required"):
+            return None
+        host = (_p.urlparse(config.get_base_url()).hostname or "").lower()
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            return (f"⛔ OFFLINE_REQUIRED: offline_required is on but the backend "
+                    f"is '{host}'. Set base_url to 127.0.0.1:8081, or turn "
+                    f"offline_required off to use cloud explicitly.")
+    except Exception:
+        pass
+    return None
+
+
 def query_llm(user_text, system_prompt=None, timeout=120, max_tokens=None):
     """Send single prompt to configured LLM backend. Returns text."""
     import requests
+    blocked = _offline_block()
+    if blocked:
+        return blocked
     base_url = config.get_base_url()
     model = config.get_model()
     api_key = config.get_api_key()
@@ -56,6 +77,9 @@ def iter_tokens(messages, timeout=120):
     when the caller stops iterating (client disconnect).
     """
     import requests
+    blocked = _offline_block()
+    if blocked:
+        raise RuntimeError(blocked)
     base_url = config.get_base_url()
     model = config.get_model()
     api_key = config.get_api_key()

@@ -16,11 +16,18 @@ RISKY_RE = re.compile(
 )
 SAFE_WORKSPACE = re.compile(r"PocketStrike-AI|my-automator|/tmp/", re.I)
 
-
 def run_shell_command(command, timeout=60):
     """Execute a shell command and return output."""
+
+    out = run_shell_checked(command, timeout)
+    return out[1]
+
+
+def run_shell_checked(command, timeout=60):
+    """Same gate, but returns (returncode, output) so callers can VERIFY
+    instead of claiming success (§69 NO FALSE SUCCESS). -1 = blocked/error."""
     if RISKY_RE.search(command) and not SAFE_WORKSPACE.search(command):
-        return ("BLOCKED high-risk command (shell safety): " + command[:120] +
+        return (-1, "BLOCKED high-risk command (shell safety): " + command[:120] +
                 ". Not running it — if you really mean it, run it manually in Termux.")
     try:
         result = subprocess.run(
@@ -31,13 +38,13 @@ def run_shell_command(command, timeout=60):
             timeout=timeout,
             executable="/data/data/com.termux/files/usr/bin/bash"
         )
-        if result.stdout:
-            return result.stdout.strip()
-        elif result.stderr:
-            return f"⚠️ Error: {result.stderr.strip()}"
-        else:
-            return "✅ Command executed (no output)"
+        out = result.stdout.strip() if result.stdout else ""
+        if result.returncode != 0 and result.stderr:
+            out = (out + "\n" if out else "") + "⚠️ Error: " + result.stderr.strip()
+        if not out:
+            out = "✅ Command executed (no output)"
+        return (result.returncode, out)
     except subprocess.TimeoutExpired:
-        return "⏰ Command timed out after 60 seconds"
+        return (-1, "⏰ Command timed out after 60 seconds")
     except Exception as e:
-        return f"❌ Error: {str(e)}"
+        return (-1, f"❌ Error: {str(e)}")

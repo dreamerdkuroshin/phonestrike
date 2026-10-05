@@ -4,7 +4,21 @@ import json
 import shlex
 
 from . import device
-from .shell import run_shell_command
+from .shell import run_shell_command, run_shell_checked
+
+
+def _verify_poll(check, timeout_s=5, interval_s=0.5):
+    """Poll check() until truthy or timeout (§69 evidence, not claims)."""
+    import time as _t
+    deadline = _t.time() + timeout_s
+    while _t.time() < deadline:
+        try:
+            if check():
+                return True
+        except Exception:
+            pass
+        _t.sleep(interval_s)
+    return False
 
 
 def handle_mobile_command(text):
@@ -69,48 +83,65 @@ def handle_mobile_command(text):
             return None
         return device.mobile_open_app(app)
 
-    # call
+    # call — verify the phone actually entered a call state
     if t.startswith("call "):
         target = t[5:].strip()
-        run_shell_command(f"am start -a android.intent.action.CALL -d tel:{shlex.quote(target)} 2>&1 | head -n 3")
+        rc, out = run_shell_checked(f"am start -a android.intent.action.CALL -d tel:{shlex.quote(target)} 2>&1 | head -n 3")
+        if rc != 0 or "Starting:" not in out:
+            return f"❌ Could not place the call ({out[:160]})."
+        connected = _verify_poll(lambda: (
+            "CALL_STATE_OFFHOOK" in run_shell_command("termux-telephony-device-state 2>&1") or
+            "CALL_STATE_RINGING" in run_shell_command("termux-telephony-device-state 2>&1")))
         device.mobile_notify("Hey Strike", f"Calling {target}")
-        return f"📞 Calling {target}..."
+        if connected:
+            return f"📞 Calling {target}..."
+        return f"⚠️ Dialer opened for {target} but no active call detected — check the screen."
 
-    # torch on/off
+    # torch on/off — termux-torch prints nothing on success, errors on failure
     if "torch on" in t or "flashlight on" in t or "turn on flash" in t:
-        run_shell_command("termux-torch on 2>&1")
-        return "🔦 Flashlight ON."
+        rc, out = run_shell_checked("termux-torch on 2>&1")
+        if rc == 0 and "error" not in out.lower():
+            return "🔦 Flashlight ON."
+        return f"❌ Flashlight did not turn on ({out[:160]})."
     if "torch off" in t or "flashlight off" in t or "turn off flash" in t:
-        run_shell_command("termux-torch off 2>&1")
-        return "🔦 Flashlight OFF."
+        rc, out = run_shell_checked("termux-torch off 2>&1")
+        if rc == 0 and "error" not in out.lower():
+            return "🔦 Flashlight OFF."
+        return f"❌ Flashlight did not turn off ({out[:160]})."
 
-    # volume
+    # volume — read back the actual level as evidence
     if "volume up" in t or "increase volume" in t:
-        run_shell_command("termux-volume music up 2>&1 || settings put system volume_music 10 2>&1")
-        return "🔊 Volume up."
+        run_shell_checked("termux-volume music up 2>&1 || settings put system volume_music 10 2>&1")
+        lvl = run_shell_command("termux-volume 2>&1 | grep -o '\"music_volume\"[^,]*' | head -n 1")
+        return f"🔊 Volume up. ({lvl[:60]})" if lvl and "Error" not in lvl else "🔊 Volume up."
     if "volume down" in t or "decrease volume" in t or "mute" in t:
-        run_shell_command("termux-volume music down 2>&1")
-        return "🔉 Volume down."
+        run_shell_checked("termux-volume music down 2>&1")
+        lvl = run_shell_command("termux-volume 2>&1 | grep -o '\"music_volume\"[^,]*' | head -n 1")
+        return f"🔉 Volume down. ({lvl[:60]})" if lvl and "Error" not in lvl else "🔉 Volume down."
 
     # time / date
     if t in ("what time is it", "time", "current time", "date", "what's the time"):
         return run_shell_command("date '+🕒 %I:%M %p, %a %b %d'")
 
-    # search
+    # search — verify am actually started something
     if t.startswith(("search ", "google ")):
         q = t.split(" ", 1)[1]
         import urllib.parse
         url = "https://www.google.com/search?q=" + urllib.parse.quote(q)
-        run_shell_command(f"am start -a android.intent.action.VIEW -d {shlex.quote(url)} 2>&1 | head -n 3")
-        return f"🔎 Searching Google for '{q}' on your phone..."
+        rc, out = run_shell_checked(f"am start -a android.intent.action.VIEW -d {shlex.quote(url)} 2>&1 | head -n 3")
+        if rc == 0 and "Starting:" in out:
+            return f"🔎 Searching Google for '{q}' on your phone..."
+        return f"❌ Could not start the search ({out[:160]})."
 
-    # navigate
+    # navigate — same verification
     if t.startswith(("navigate to ", "directions to ")):
         dest = t.split(" to ", 1)[1] if " to " in t else t
         import urllib.parse
         url = "google.navigation:q=" + urllib.parse.quote(dest)
-        run_shell_command(f"am start --user 0 -a android.intent.action.VIEW -d {shlex.quote(url)} 2>&1 | head -n 3")
-        return f"🗺️ Navigating to {dest}..."
+        rc, out = run_shell_checked(f"am start --user 0 -a android.intent.action.VIEW -d {shlex.quote(url)} 2>&1 | head -n 3")
+        if rc == 0 and "Starting:" in out:
+            return f"🗺️ Navigating to {dest}..."
+        return f"❌ Could not start navigation ({out[:160]})."
 
     # security settings (Extend Unlock / Smart Lock lives here)
     if any(k in t for k in ["security settings", "smart lock", "extend unlock", "trust agent"]):

@@ -53,21 +53,78 @@ object ModelManager {
         return true
     }
 
+    // ---------- A-07 TOFU manifest: hash once at download, trust on size ----------
+    // Full SHA-256 on every boot is too slow on 4GB RAM; instead record
+    // {size, sha256} per file after a verified download. Later boots take
+    // the fast path (size match) and only re-hash when size differs or no
+    // manifest exists. Tamper = size change or hash mismatch → purge.
+    fun sha256(f: File): String {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        f.inputStream().use { inp ->
+            val buf = ByteArray(256 * 1024)
+            while (true) {
+                val n = inp.read(buf)
+                if (n < 0) break
+                md.update(buf, 0, n)
+            }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /** Write manifest.json into dir. JVM-safe (dir passed explicitly). */
+    fun recordManifest(dir: File, required: Map<String, Long>): Boolean {
+        return try {
+            val entries = required.keys.joinToString(",\n") { rel ->
+                val f = File(dir, rel)
+                "\"${rel.replace("\"", "")}\": {\"size\": ${f.length()}, \"sha\": \"${sha256(f)}\"}"
+            }
+            File(dir, "manifest.json").writeText("{\"verified_at\": ${System.currentTimeMillis()},\n$entries}")
+            true
+        } catch (_: Exception) { false }
+    }
+
+    /** True when every required file matches the recorded manifest.
+     *  No manifest (legacy download) falls back to the size gates.
+     *  Small files (<1MB) are ALWAYS re-hashed (free); large model blobs
+     *  take the TOFU fast path (size match) and re-hash only on drift —
+     *  full re-hash of 40MB+ on every boot is too slow on 4GB RAM.
+     *  ponytail: same-size swap of a LARGE blob is the known ceiling. */
+    fun manifestOk(dir: File, required: Map<String, Long>): Boolean {
+        val mf = File(dir, "manifest.json")
+        if (!mf.isFile) return verifyFiles(dir, required)
+        return try {
+            val txt = mf.readText()
+            for ((rel, min) in required) {
+                val f = File(dir, rel)
+                if (!f.isFile || f.length() < min) return false
+                val sizeRe = Regex("\"" + Regex.escape(rel) + "\"\\s*:\\s*\\{\\s*\"size\"\\s*:\\s*(\\d+)")
+                val shaRe = Regex("\"" + Regex.escape(rel) + "\"\\s*:\\s*\\{[^}]*\"sha\"\\s*:\\s*\"([0-9a-f]{64})\"")
+                val size = sizeRe.find(txt)?.groupValues?.get(1)?.toLongOrNull()
+                val sha = shaRe.find(txt)?.groupValues?.get(1)
+                if (size == null || sha == null) return false // fail closed
+                if (f.length() != size || f.length() < 1_000_000) {
+                    if (sha256(f) != sha) return false
+                }
+            }
+            true
+        } catch (_: Exception) { false }
+    }
+
     fun voskRequired(lang: String = "en"): Map<String, Long> =
         VOSK_COMMON + if (lang == "hi") VOSK_GRAPH_HI else VOSK_GRAPH_EN
     fun sherpaMin(): Map<String, Long> = SHERPA_MIN
 
-    fun ready(c: Context): Boolean = verifyFiles(dir(c), voskRequired("en"))
+    fun ready(c: Context): Boolean = manifestOk(dir(c), voskRequired("en"))
 
     /** Corrupt model found: delete so the next Start re-downloads instead of
      *  native-crashing the process. Returns true if anything was removed. */
     fun purgeIfCorrupt(c: Context, lang: String): Boolean {
         val d = if (lang == "hi") hiDir(c) else dir(c)
-        if (d.exists() && !verifyFiles(d, voskRequired(lang))) {
+        if (d.exists() && !manifestOk(d, voskRequired(lang))) {
             try { d.deleteRecursively() } catch (_: Exception) {}
             return true
         }
-        if (lang != "hi" && sherpaDir(c).exists() && !verifyFiles(sherpaDir(c), SHERPA_MIN)) {
+        if (lang != "hi" && sherpaDir(c).exists() && !manifestOk(sherpaDir(c), SHERPA_MIN)) {
             SHERPA_FILES.forEach { f ->
                 try { File(sherpaDir(c), f).delete() } catch (_: Exception) {}
             }
@@ -87,7 +144,7 @@ object ModelManager {
 
     fun hiDir(c: Context): File = File(c.filesDir, "models/small-hi")
 
-    fun hiReady(c: Context): Boolean = verifyFiles(hiDir(c), voskRequired("hi"))
+    fun hiReady(c: Context): Boolean = manifestOk(hiDir(c), voskRequired("hi"))
 
     /** Model required for the given language pref. */
     fun readyFor(c: Context, lang: String): Boolean = when (lang) {
@@ -113,7 +170,8 @@ object ModelManager {
     fun whisperDir(c: Context): File = File(c.filesDir, "models/whisper-tiny")
 
     fun whisperReady(c: Context): Boolean =
-        WHISPER_FILES.all { (f, min) -> File(whisperDir(c), f).let { it.isFile && it.length() >= min } }
+        WHISPER_FILES.all { (f, min) -> File(whisperDir(c), f).let { it.isFile && it.length() >= min } } &&
+            manifestOk(whisperDir(c), WHISPER_FILES)
 
     fun downloadWhisper(
         c: Context,
@@ -142,17 +200,20 @@ object ModelManager {
             }
             if (!ok) throw RuntimeException("whisper model download failed: $name")
         }
-        if (!whisperReady(c)) throw RuntimeException("whisper model verify failed")
+        if (!verifyFiles(whisperDir(c), WHISPER_FILES)) throw RuntimeException("whisper model verify failed")
+        recordManifest(whisperDir(c), WHISPER_FILES)
     }
 
     fun downloadHi(c: Context, onProgress: (done: Long, total: Long) -> Unit) =
         downloadZip(HI_URL, hiDir(c).apply { mkdirs() }, "vosk-model-hi.zip", c, onProgress).also {
-            if (!hiReady(c)) throw RuntimeException("Model unpack verify failed")
+            if (!verifyFiles(hiDir(c), voskRequired("hi"))) throw RuntimeException("Model unpack verify failed")
+            recordManifest(hiDir(c), voskRequired("hi"))
         }
 
     fun download(c: Context, onProgress: (done: Long, total: Long) -> Unit) =
         downloadZip(URL, dir(c).apply { mkdirs() }, "vosk-model.zip", c, onProgress).also {
-            if (!ready(c)) throw RuntimeException("Model unpack verify failed")
+            if (!verifyFiles(dir(c), voskRequired("en"))) throw RuntimeException("Model unpack verify failed")
+            recordManifest(dir(c), voskRequired("en"))
         }
 
     private fun downloadZip(
@@ -230,7 +291,7 @@ object ModelManager {
     fun sherpaDir(c: Context): File = File(c.filesDir, "models/sherpa-en20m")
 
     fun sherpaReady(c: Context): Boolean =
-        verifyFiles(sherpaDir(c), SHERPA_MIN)
+        manifestOk(sherpaDir(c), SHERPA_MIN)
 
     /** Resumable per-file download: HF primary, hf-mirror fallback.
      *  Lock + content-length verify: a truncated file must never be renamed
@@ -265,7 +326,8 @@ object ModelManager {
             }
             if (!ok) throw RuntimeException("sherpa model download failed: $name")
         }
-        if (!sherpaReady(c)) throw RuntimeException("sherpa model verify failed")
+        if (!verifyFiles(sherpaDir(c), SHERPA_MIN)) throw RuntimeException("sherpa model verify failed")
+        recordManifest(sherpaDir(c), SHERPA_MIN)
     }
 
     private fun fetchTo(url: String, dest: File, onProgress: (Long, Long) -> Unit) {
